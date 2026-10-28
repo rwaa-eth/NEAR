@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeRing, presenceVerdict, ringSelfIntersects } from "../src/geo";
+import { geometryRev, normalizeRing, presenceVerdict, ringSelfIntersects } from "../src/geo";
 
 describe("rings", () => {
   it("closes an open ring", () => {
@@ -23,6 +23,16 @@ describe("rings", () => {
         [0, 0],
       ]),
     );
+  });
+
+  it("hashes a normalized ring to a stable revision", () => {
+    const ring = normalizeRing([
+      [0, 0],
+      [0, 0.001],
+      [0.001, 0],
+    ]);
+    assert.equal(geometryRev(ring), geometryRev([...ring]));
+    assert.equal(geometryRev(ring).length, 64);
   });
 
   it("accepts a simple square", () => {

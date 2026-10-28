@@ -11,6 +11,12 @@ export interface Config {
   nearRpcUrl: string;
   relayerAccount: string;
   relayerKey: string;
+  baseRpcUrl: string;
+  erc20Address: string;
+  erc20Symbol: string;
+  basePaymaster: boolean;
+  escrowAddress: string;
+  escrowOperatorKey: string;
 }
 
 function androidOrigin(fingerprint: string): string {
@@ -33,11 +39,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     origin,
     origins,
     sqlitePath: env.SQLITE_PATH ?? "data/rwaa.sqlite",
-    packageName: env.PACKAGE_NAME ?? "one.percolate.rwaa",
+    packageName: env.PACKAGE_NAME ?? "one.percolate.maplogger",
     fingerprints,
     nearNetwork: env.NEAR_NETWORK ?? "testnet",
     nearRpcUrl: env.NEAR_RPC_URL ?? "https://rpc.testnet.near.org",
     relayerAccount: env.NEAR_RELAYER_ACCOUNT ?? "",
     relayerKey: env.NEAR_RELAYER_KEY ?? "",
+    baseRpcUrl: env.BASE_RPC_URL ?? "https://sepolia.base.org",
+    erc20Address: (env.ERC20_ADDRESS ?? "").trim(),
+    erc20Symbol: (env.ERC20_SYMBOL ?? "USDT").trim() || "USDT",
+    basePaymaster: env.BASE_PAYMASTER === "true" || env.BASE_PAYMASTER === "1",
+    escrowAddress: (env.ESCROW_ADDRESS ?? "").trim(),
+    escrowOperatorKey: (env.ESCROW_OPERATOR_KEY ?? "").trim(),
   };
 }

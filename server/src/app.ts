@@ -7,9 +7,10 @@ import type { RegistrationResponseJSON } from "@simplewebauthn/types";
 import { loadConfig, type Config } from "./config";
 import { openDatabase, type Db } from "./db";
 import { issueChallenge, tokenOk, verifyAssertion, verifyRegistration, type AssertionHeaders } from "./auth";
-import { bounds, centroid, haversineM, normalizeRing, presenceVerdict } from "./geo";
+import { bounds, centroid, geometryRev, haversineM, normalizeRing, presenceVerdict } from "./geo";
 import { publicKeyToString } from "./accountId";
 import { initPasskeyAccount } from "./relayer";
+import { registerEthWallet } from "./ethw";
 
 const registerBody = z.object({
   challengeId: z.string().uuid(),
@@ -160,28 +161,52 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
     const center = centroid(ring);
     const now = new Date().toISOString();
     const owner = request.accountId ?? "";
+    const revision = geometryRev(ring);
+    const owned = db.prepare("SELECT id FROM parcels WHERE owner_account_id = ?").get(owner) as { id: string } | undefined;
     if (body.id) {
       const existing = db.prepare("SELECT owner_account_id FROM parcels WHERE id = ?").get(body.id) as
         | { owner_account_id: string }
         | undefined;
-      if (!existing) throw statusError(404, "parcel not found");
-      if (existing.owner_account_id !== owner) throw statusError(403, "parcel is owned by another account");
+      if (existing && existing.owner_account_id !== owner) throw statusError(403, "parcel is owned by another account");
+      if (!existing && owned) throw statusError(409, "this account already has a lot");
+    }
+    const id = owned?.id ?? body.id ?? randomUUID();
+    const ringJson = JSON.stringify(ring);
+    if (owned) {
       db.prepare(
-        `UPDATE parcels SET ring_json = ?, min_lat = ?, max_lat = ?, min_lng = ?, max_lng = ?, updated_at = ? WHERE id = ?`,
-      ).run(JSON.stringify(ring), box.minLat, box.maxLat, box.minLng, box.maxLng, now, body.id);
+        `UPDATE parcels
+         SET ring_json = ?, geometry_rev = ?, min_lat = ?, max_lat = ?, min_lng = ?, max_lng = ?, updated_at = ?
+         WHERE owner_account_id = ?`,
+      ).run(ringJson, revision, box.minLat, box.maxLat, box.minLng, box.maxLng, now, owner);
     } else {
-      const id = randomUUID();
       db.prepare(
-        `INSERT INTO parcels (id, owner_account_id, ring_json, min_lat, max_lat, min_lng, max_lng, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, owner, JSON.stringify(ring), box.minLat, box.maxLat, box.minLng, box.maxLng, now, now);
-      body.id = id;
+        `INSERT INTO parcels (
+           id, owner_account_id, ring_json, geometry_rev, min_lat, max_lat, min_lng, max_lng, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, owner, ringJson, revision, box.minLat, box.maxLat, box.minLng, box.maxLng, now, now);
     }
     db.prepare(
       `INSERT INTO homes (owner_account_id, latitude, longitude, radius_m) VALUES (?, ?, ?, 150)
        ON CONFLICT(owner_account_id) DO UPDATE SET latitude = excluded.latitude, longitude = excluded.longitude`,
     ).run(owner, center.lat, center.lng);
-    return { id: body.id, ownerAccountId: owner, ring };
+    return { id, accountId: owner, ownerAccountId: owner, ring, geometryRev: revision };
+  });
+
+  app.get("/v1/lots/mine", async (request) => {
+    const owner = request.accountId ?? "";
+    const row = db
+      .prepare("SELECT id, ring_json, geometry_rev, updated_at FROM parcels WHERE owner_account_id = ?")
+      .get(owner) as { id: string; ring_json: string; geometry_rev: string; updated_at: string } | undefined;
+    if (!row) return { accountId: owner, lot: null };
+    return {
+      accountId: owner,
+      lot: {
+        id: row.id,
+        ring: JSON.parse(row.ring_json) as Array<[number, number]>,
+        geometryRev: row.geometry_rev,
+        updatedAt: row.updated_at,
+      },
+    };
   });
 
   app.get("/v1/parcels/nearby", async (request) => {
@@ -247,12 +272,22 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
     return { id, atHome, accuracyM: body.accuracyM };
   });
 
+  registerEthWallet(app, config, db);
+
   return app;
 }
 
 function isPublic(request: FastifyRequest): boolean {
   const url = request.url.split("?")[0];
-  return url === "/" || url === "/login" || url === "/login.js" || url === "/.well-known/assetlinks.json";
+  return (
+    url === "/" ||
+    url === "/login" ||
+    url === "/login.js" ||
+    url === "/.well-known/assetlinks.json" ||
+    url === "/ethw" ||
+    url === "/ethw.js" ||
+    url.startsWith("/ethw/")
+  );
 }
 
 function readAssertion(request: FastifyRequest): AssertionHeaders {

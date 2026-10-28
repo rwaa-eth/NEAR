@@ -5,9 +5,13 @@
   "type": "commonjs",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "tsc && npm run build:ethw",
+    "build:ethw": "esbuild client/ethw.ts --bundle --format=iife --platform=browser --outfile=public/ethw.js",
     "start": "node dist/index.js",
-    "test": "tsx --test test/accountId.test.ts test/geo.test.ts test/api.test.ts"
+    "deploy:usdt": "tsx script/deploy-usdt.ts",
+    "fund": "tsx script/fund-usdt.ts",
+    "deploy:escrow": "tsx script/deploy-escrow.ts",
+    "test": "tsx --test test/accountId.test.ts test/geo.test.ts test/api.test.ts test/ethw.test.ts test/escrow.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
@@ -15,13 +19,19 @@
     "@simplewebauthn/server": "11.0.0",
     "better-sqlite3": "^11.8.1",
     "cbor-x": "^1.6.0",
+    "esbuild": "^0.25.10",
     "fastify": "^5.2.1",
     "near-api-js": "^5.1.0",
+    "qrcode": "^1.5.4",
+    "viem": "^2.38.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@openzeppelin/contracts": "^5.6.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.13.4",
+    "@types/qrcode": "^1.5.5",
+    "solc": "^0.8.38",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"
   }

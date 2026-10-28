@@ -1,4 +1,11 @@
+import { createHash } from "node:crypto";
+
 export const INCONCLUSIVE_ACCURACY_M = 300;
+
+/** Stable hash of a normalized ring. The same coordinates always yield the same revision. */
+export function geometryRev(ring: Array<[number, number]>): string {
+  return createHash("sha256").update(JSON.stringify(ring)).digest("hex");
+}
 
 export interface LngLat {
   lng: number;

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Base Sepolia wallet</title>
+  <style>
+    body { font-family: Georgia, serif; margin: 2rem auto; max-width: 40rem; color: #14241c; background: #f4f7f4; }
+    h1 { margin-bottom: 0.3rem; padding-right: 4rem; }
+    .corner { position: fixed; top: 1rem; right: 1rem; width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: #d5e2d8; box-shadow: 0 0 0 2px #fff; }
+    .with-avatar { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.3rem; }
+    .with-avatar input { margin-top: 0; }
+    .with-avatar img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #d5e2d8; flex: none; }
+    p, label { line-height: 1.4; }
+    label { display: block; margin-top: 0.9rem; }
+    input { font: inherit; width: 100%; box-sizing: border-box; padding: 0.55rem 0.7rem; margin-top: 0.3rem; }
+    button { font: inherit; margin: 0.8rem 0.5rem 0 0; padding: 0.6rem 0.9rem; }
+    code, .mono { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+    #status { white-space: pre-wrap; }
+    #wallet { margin-top: 1.4rem; }
+    canvas { background: white; margin-top: 0.6rem; }
+    .muted { color: #4e6558; }
+    ul { padding-left: 1.2rem; }
+    li { margin: 0.35rem 0; }
+  </style>
+</head>
+<body>
+  <img id="me" class="corner" width="48" height="48" alt="Your Gravatar">
+  <h1>Base Sepolia wallet</h1>
+  <p>A passkey owns this account. The address is a Coinbase smart account on Base Sepolia. Register an email so other people can send the demo token to you.</p>
+
+  <section id="setup">
+    <label>Email
+      <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+    </label>
+    <button id="create" type="button">Create wallet</button>
+    <button id="open" type="button">Open wallet</button>
+  </section>
+
+  <section id="wallet" hidden>
+    <p>Address<br><span id="address" class="mono"></span></p>
+    <p><a id="explorer" href="" target="_blank" rel="noopener">View on BaseScan</a></p>
+    <canvas id="qr" width="180" height="180" aria-label="Receive QR code"></canvas>
+    <p>ETH <strong id="eth">…</strong></p>
+    <p><span id="token-label">USDT</span> <strong id="token">…</strong></p>
+    <button id="refresh" type="button">Refresh balances</button>
+    <button id="switch" type="button">Use another email</button>
+
+    <h2>To collect</h2>
+    <p id="incoming-note" class="muted">Payments held in escrow for this email.</p>
+    <ul id="incoming"></ul>
+    <button id="collect" type="button" hidden>Collect</button>
+
+    <h2>Waiting for collection</h2>
+    <p class="muted">Payments you put in escrow. The recipient has not collected them.</p>
+    <ul id="outgoing"></ul>
+
+    <h2>Send</h2>
+    <p id="gas" class="muted"></p>
+    <label>Recipient email
+      <span class="with-avatar">
+        <img id="recipient-avatar" width="40" height="40" alt="Recipient Gravatar" hidden>
+        <input id="recipient" type="email" autocomplete="off" placeholder="friend@example.com">
+      </span>
+    </label>
+    <p id="resolved" class="muted"></p>
+    <label>Amount
+      <input id="amount" inputmode="decimal" placeholder="0.00">
+    </label>
+    <button id="send" type="button">Send</button>
+  </section>
+
+  <p id="status"></p>
+  <script src="/ethw.js"></script>
+</body>
+</html>
