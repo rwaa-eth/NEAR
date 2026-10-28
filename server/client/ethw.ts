@@ -106,6 +106,44 @@ function explain(error: unknown): string {
   return "Something went wrong.";
 }
 
+function errorText(error: unknown): string {
+  const parts: string[] = [];
+  let currentError: unknown = error;
+  for (let depth = 0; currentError && depth < 4; depth += 1) {
+    if (typeof currentError === "string") {
+      parts.push(currentError);
+      break;
+    }
+    if (typeof currentError !== "object") break;
+    const record = currentError as { shortMessage?: unknown; message?: unknown; details?: unknown; cause?: unknown };
+    if (record.shortMessage) parts.push(String(record.shortMessage));
+    if (record.message) parts.push(String(record.message));
+    if (record.details) parts.push(String(record.details));
+    currentError = record.cause;
+  }
+  return parts.join(" ");
+}
+
+async function explainSend(error: unknown): Promise<string> {
+  const text = errorText(error).toLowerCase();
+  const gasFailure =
+    text.includes("aa21") ||
+    text.includes("pay prefund") ||
+    text.includes("insufficient funds") ||
+    text.includes("missing or invalid parameters");
+  if (gasFailure && current && !config.paymaster) {
+    try {
+      const balance = await client().getBalance({ address: current.address });
+      if (balance === 0n) return "no gas in account";
+    } catch {
+      if (text.includes("aa21") || text.includes("pay prefund") || text.includes("insufficient funds")) {
+        return "no gas in account";
+      }
+    }
+  }
+  return explain(error);
+}
+
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
@@ -198,8 +236,8 @@ async function showWallet(account: StoredAccount): Promise<void> {
   explorer.href = `https://sepolia.basescan.org/address/${account.address}`;
   tokenLabel.textContent = config.symbol;
   gasEl.textContent = config.paymaster
-    ? "Gas on Base Sepolia is sponsored for this RPC."
-    : "The smart account pays gas in ETH. Fund the address on Base Sepolia if a send is rejected.";
+    ? ""
+    : "";
   syncSendButton();
   await QRCode.toCanvas(qr, account.address, { width: 180, margin: 1 });
   await showUserAvatar(account.email);
@@ -357,7 +395,7 @@ async function loadEscrow(): Promise<void> {
     return `${tokenAmount(row.amount)} to ${row.recipientEmail} — not collected yet`;
   });
   incomingNote.textContent = config.escrow
-    ? "Payments held in escrow for this email."
+    ? ""
     : result.incoming.length > 0
       ? "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected."
       : "Set ESCROW_ADDRESS on the server to hold payments for emails that have not registered.";
@@ -489,7 +527,7 @@ async function depositEscrow(email: string): Promise<void> {
     await loadEscrow();
     emailSendNotice(email, true);
   } catch (error) {
-    setStatus(explain(error));
+    setStatus(await explainSend(error));
   } finally {
     syncSendButton();
   }
@@ -559,7 +597,7 @@ async function sendToken(): Promise<void> {
     amountInput.value = "";
     await refreshBalances();
   } catch (error) {
-    setStatus(explain(error));
+    setStatus(await explainSend(error));
   } finally {
     syncSendButton();
   }

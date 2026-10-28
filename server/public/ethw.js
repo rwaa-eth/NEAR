@@ -26087,6 +26087,38 @@ ${prettyStateOverride(stateOverride)}`;
         if (error instanceof Error) return error.message;
         return "Something went wrong.";
       }
+      function errorText(error) {
+        const parts = [];
+        let currentError = error;
+        for (let depth = 0; currentError && depth < 4; depth += 1) {
+          if (typeof currentError === "string") {
+            parts.push(currentError);
+            break;
+          }
+          if (typeof currentError !== "object") break;
+          const record = currentError;
+          if (record.shortMessage) parts.push(String(record.shortMessage));
+          if (record.message) parts.push(String(record.message));
+          if (record.details) parts.push(String(record.details));
+          currentError = record.cause;
+        }
+        return parts.join(" ");
+      }
+      async function explainSend(error) {
+        const text = errorText(error).toLowerCase();
+        const gasFailure = text.includes("aa21") || text.includes("pay prefund") || text.includes("insufficient funds") || text.includes("missing or invalid parameters");
+        if (gasFailure && current && !config.paymaster) {
+          try {
+            const balance = await client().getBalance({ address: current.address });
+            if (balance === 0n) return "no gas in account";
+          } catch {
+            if (text.includes("aa21") || text.includes("pay prefund") || text.includes("insufficient funds")) {
+              return "no gas in account";
+            }
+          }
+        }
+        return explain(error);
+      }
       async function api(path, body) {
         const response = await fetch(path, {
           method: body === void 0 ? "GET" : "POST",
@@ -26316,7 +26348,7 @@ ${prettyStateOverride(stateOverride)}`;
         renderEscrow(outgoingList, result.outgoing, "No payments waiting.", (row) => {
           return `${tokenAmount(row.amount)} to ${row.recipientEmail} \u2014 not collected yet`;
         });
-        incomingNote.textContent = config.escrow ? "Payments held in escrow for this email." : result.incoming.length > 0 ? "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected." : "Set ESCROW_ADDRESS on the server to hold payments for emails that have not registered.";
+        incomingNote.textContent = config.escrow ? "" : result.incoming.length > 0 ? "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected." : "Set ESCROW_ADDRESS on the server to hold payments for emails that have not registered.";
         collectButton.hidden = result.incoming.length === 0;
         if (result.incoming.length > 0) {
           const total = result.incoming.reduce((sum, row) => sum + BigInt(row.amount), 0n);
@@ -26439,7 +26471,7 @@ ${prettyStateOverride(stateOverride)}`;
           await loadEscrow();
           emailSendNotice(email, true);
         } catch (error) {
-          setStatus(explain(error));
+          setStatus(await explainSend(error));
         } finally {
           syncSendButton();
         }
@@ -26508,7 +26540,7 @@ ${prettyStateOverride(stateOverride)}`;
           amountInput.value = "";
           await refreshBalances();
         } catch (error) {
-          setStatus(explain(error));
+          setStatus(await explainSend(error));
         } finally {
           syncSendButton();
         }
