@@ -1,0 +1,47 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+*.iml
+.vscode/
+
+# Secrets
+.env
+*.jks
+*.keystore
+export_credentials.cfg
+google-services.json
+
+# Node server
+node_modules/
+server/dist/
+server/data/
+*.tsbuildinfo
+
+# Godot
+.godot/
+*.uid
+*.translation
+.mono/
+mono_crash.*.json
+
+# Logs
+*.log
+.kotlin/
+
+# Android and Gradle.
+# app/android is the generated Godot export template.
+.gradle/
+.externalNativeBuild/
+.cxx/
+captures/
+*.hprof
+*.apk
+*.aab
+*.ap_
+local.properties
+app/android/
+MapLogger/**/build/

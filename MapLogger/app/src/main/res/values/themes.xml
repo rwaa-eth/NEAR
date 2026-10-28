@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MapLogger" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/walk_go</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="android:statusBarColor">@color/screen</item>
+        <item name="android:navigationBarColor">@color/screen</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

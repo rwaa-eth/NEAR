@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MapLogger</string>
+    <string name="home_subtitle">Walk the boundary and mark each corner.</string>
+    <string name="map_option">Map</string>
+    <string name="start_walk">Start walk</string>
+    <string name="stop_walk">Finish lot</string>
+    <string name="center_gps">Centre on GPS</string>
+    <string name="location_required">Location is needed to record the walk.</string>
+    <string name="mark_corner">Mark corner</string>
+    <string name="waiting_for_gps">Waiting for a GPS fix.</string>
+    <string name="corner_already_marked">A corner is already marked there.</string>
+    <string name="hold_still">Hold still</string>
+    <string name="hold_still_start">Hold still while the start corner is marked.</string>
+    <string name="hold_still_corner">Hold still while this corner is marked.</string>
+    <string name="refine_failed">Could not get a steady GPS fix. Try again.</string>
+    <string name="need_three_corners">Mark at least three corners before finishing the lot.</string>
+</resources>

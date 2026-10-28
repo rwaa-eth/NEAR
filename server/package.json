@@ -1,0 +1,28 @@
+{
+  "name": "rwaa-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "tsx --test test/accountId.test.ts test/geo.test.ts test/api.test.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.8.0",
+    "@scure/base": "^1.2.4",
+    "@simplewebauthn/server": "11.0.0",
+    "better-sqlite3": "^11.8.1",
+    "cbor-x": "^1.6.0",
+    "fastify": "^5.2.1",
+    "near-api-js": "^5.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
