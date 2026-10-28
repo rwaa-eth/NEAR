@@ -17,6 +17,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.location.CurrentLocationRequest
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -40,6 +42,11 @@ import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 import org.maplibre.geojson.Polygon
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.Instant
 import kotlin.math.hypot
 
 class MapActivity : AppCompatActivity() {
@@ -132,6 +139,7 @@ class MapActivity : AppCompatActivity() {
         binding.centerButton.setOnClickListener { centerOnGps() }
         binding.walkButton.setOnClickListener { toggleWalk() }
         binding.vertexButton.setOnClickListener { markCorner() }
+        binding.registerButton.setOnClickListener { registerLot() }
         showIdleButton()
     }
 
@@ -208,7 +216,47 @@ class MapActivity : AppCompatActivity() {
         fused.removeLocationUpdates(locationCallback)
         redrawTrack()
         showIdleButton()
+        binding.registerButton.visibility = View.VISIBLE
+        binding.registerButton.isEnabled = true
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun registerLot() {
+        if (!track.isClosed()) return
+        val corners = track.vertices().map { it.position }
+        if (corners.size < 3) return
+        val identity = AppStore(this).identity()
+        if (identity == null) {
+            Toast.makeText(this, R.string.passkey_required, Toast.LENGTH_LONG).show()
+            return
+        }
+        val body = LotPayload.ringBody(corners)
+        binding.registerButton.isEnabled = false
+        lifecycleScope.launch {
+            try {
+                val api = RwaaApi()
+                val challenge = withContext(Dispatchers.IO) { api.challenge() }
+                val bound = ChallengeBinding.bind(challenge.nonce, "POST", "/v1/parcels", body)
+                val assertion = Passkeys.get(this@MapActivity, bound, identity.credentialId, challenge.challengeId)
+                val saved = withContext(Dispatchers.IO) { api.saveParcel(body, assertion) }
+                AppStore(this@MapActivity).saveLot(saved.ringJson, saved.id, Instant.now().toString())
+                Toast.makeText(this@MapActivity, R.string.lot_registered, Toast.LENGTH_SHORT).show()
+                setResult(RESULT_OK)
+                finish()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: GetCredentialCancellationException) {
+                binding.registerButton.isEnabled = true
+                Toast.makeText(this@MapActivity, R.string.passkey_cancelled, Toast.LENGTH_SHORT).show()
+            } catch (error: Exception) {
+                binding.registerButton.isEnabled = true
+                Toast.makeText(
+                    this@MapActivity,
+                    error.message ?: getString(R.string.register_failed),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
     }
 
     private fun requestLocationPermission(startWalk: Boolean) {
@@ -258,6 +306,7 @@ class MapActivity : AppCompatActivity() {
                 track.clear()
                 track.addVertex(fix.latitude, fix.longitude, fix.accuracyMetres)
                 recording = true
+                binding.registerButton.visibility = View.GONE
                 showRecordingButton()
                 startUpdates(fine = false)
                 window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

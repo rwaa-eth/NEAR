@@ -51,6 +51,15 @@
         app:srcCompat="@drawable/ic_play"
         app:tint="@android:color/white" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/register_button"
+        android:layout_width="wrap_content"
+        android:layout_height="56dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="120dp"
+        android:text="@string/register_lot"
+        android:visibility="gone" />
+
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/hold_card"
         android:layout_width="wrap_content"

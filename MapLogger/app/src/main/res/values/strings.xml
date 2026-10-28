@@ -15,4 +15,22 @@
     <string name="hold_still_corner">Hold still while this corner is marked.</string>
     <string name="refine_failed">Could not get a steady GPS fix. Try again.</string>
     <string name="need_three_corners">Mark at least three corners before finishing the lot.</string>
+    <string name="creating_passkey">Creating your NEAR passkey</string>
+    <string name="unlocking">Unlock your passkey to open the app</string>
+    <string name="try_passkey_again">Try again</string>
+    <string name="passkey_cancelled">Passkey was cancelled.</string>
+    <string name="passkey_failed">The passkey could not be used.</string>
+    <string name="cert_fingerprint">App certificate:\n%1$s</string>
+    <string name="wallet_title">NEAR account</string>
+    <string name="balance_loading">Reading balance…</string>
+    <string name="receive_qr">Account QR code</string>
+    <string name="copy_account">Copy account</string>
+    <string name="account_copied">Account copied</string>
+    <string name="view_on_explorer">View on explorer</string>
+    <string name="no_lot">No lot registered yet.</string>
+    <string name="lot_saved">Lot registered · %1$d corners</string>
+    <string name="register_lot">Register lot</string>
+    <string name="lot_registered">Lot registered</string>
+    <string name="passkey_required">Unlock the passkey before registering a lot.</string>
+    <string name="register_failed">The lot could not be registered.</string>
 </resources>
