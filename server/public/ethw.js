@@ -26067,12 +26067,10 @@ ${prettyStateOverride(stateOverride)}`;
       var current = null;
       var decimals = 6;
       var lookupTimer = 0;
-      var meTimer = 0;
       var userAvatarToken = 0;
       var recipientToken = 0;
       var lookedUp = null;
       var gravatarCache = /* @__PURE__ */ new Map();
-      var placeholderAvatar = "https://www.gravatar.com/avatar/0000000000000000000000000000000000000000000000000000000000000000?d=mp&f=y&s=96";
       var client = () => createPublicClient({
         chain: baseSepolia,
         transport: http(new URL(config.rpc, window.location.origin).toString())
@@ -26162,12 +26160,14 @@ ${prettyStateOverride(stateOverride)}`;
         const token = ++userAvatarToken;
         const trimmed = email.trim();
         if (!trimmed) {
-          me.src = placeholderAvatar;
+          me.hidden = true;
+          me.removeAttribute("src");
           return;
         }
-        const url = await gravatarUrl(trimmed, 96);
+        const url = await gravatarUrl(trimmed, 112);
         if (token !== userAvatarToken) return;
         me.src = url;
+        me.hidden = false;
       }
       function amountLabel() {
         const raw = amountInput.value.trim();
@@ -26297,18 +26297,8 @@ ${prettyStateOverride(stateOverride)}`;
         await showWallet(account);
       }
       function setSendAction(registered) {
-        if (registered) {
-          sendButton.textContent = "Send";
-          sendButton.disabled = !config.erc20;
-          return;
-        }
-        if (config.escrow && config.erc20) {
-          sendButton.textContent = "Send to escrow";
-          sendButton.disabled = false;
-          return;
-        }
-        sendButton.textContent = "Email send notice";
-        sendButton.disabled = false;
+        sendButton.textContent = "Send";
+        sendButton.disabled = registered ? !config.erc20 : false;
       }
       function renderEscrow(list, rows, empty, describe) {
         list.replaceChildren();
@@ -26565,13 +26555,7 @@ ${prettyStateOverride(stateOverride)}`;
         wallet.hidden = true;
         setup.hidden = false;
         setStatus("");
-        showUserAvatar(emailInput.value).catch((error) => setStatus(explain(error)));
-      });
-      emailInput.addEventListener("input", () => {
-        window.clearTimeout(meTimer);
-        meTimer = window.setTimeout(() => {
-          showUserAvatar(emailInput.value).catch((error) => setStatus(explain(error)));
-        }, 200);
+        showUserAvatar("").catch((error) => setStatus(explain(error)));
       });
       recipientInput.addEventListener("input", () => {
         window.clearTimeout(lookupTimer);
@@ -26582,7 +26566,6 @@ ${prettyStateOverride(stateOverride)}`;
       sendButton.addEventListener("click", () => {
         sendToken().catch((error) => setStatus(explain(error)));
       });
-      me.src = placeholderAvatar;
       void api("/ethw/api/config").then(async (loaded) => {
         config = loaded;
         createButton.disabled = false;

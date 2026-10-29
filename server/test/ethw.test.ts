@@ -27,7 +27,12 @@ describe("Base Sepolia wallet", () => {
     const legacy = await app.inject({ method: "GET", url: "/ethw" });
     assert.equal(legacy.statusCode, 302);
     assert.equal(legacy.headers.location, "/");
-    assert.match(page.body, /Base Sepolia/);
+    assert.match(page.body, /RaOpenwallet/);
+    assert.match(page.body, /\/ragraphic\.jpg/);
+    assert.match(page.body, /\/favicon\.ico/);
+    const icon = await app.inject({ method: "GET", url: "/favicon.ico" });
+    assert.equal(icon.statusCode, 200);
+    assert.equal(icon.headers["content-type"], "image/x-icon");
     assert.match(page.body, /\/ethw\.js/);
     assert.match(page.body, /id="me"/);
     assert.match(page.body, /id="recipient-avatar"/);

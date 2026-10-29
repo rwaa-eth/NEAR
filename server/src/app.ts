@@ -118,6 +118,11 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
     return reply.type("application/javascript").send(script);
   });
 
+  app.get("/favicon.ico", async (_request, reply) => {
+    const icon = fs.readFileSync(path.join(__dirname, "..", "public", "favicon.ico"));
+    return reply.type("image/x-icon").send(icon);
+  });
+
   app.get("/.well-known/assetlinks.json", async () => assetLinks(config));
 
   app.post("/v1/auth/challenge", async () => issueChallenge(db));
@@ -286,9 +291,11 @@ function isPublic(request: FastifyRequest): boolean {
     url === "/" ||
     url === "/login" ||
     url === "/login.js" ||
+    url === "/favicon.ico" ||
     url === "/.well-known/assetlinks.json" ||
     url === "/ethw" ||
     url === "/ethw.js" ||
+    url === "/ragraphic.jpg" ||
     url.startsWith("/ethw/")
   );
 }

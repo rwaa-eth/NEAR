@@ -23,6 +23,7 @@ describe("API gates", () => {
     const login = await app.inject({ method: "GET", url: "/login" });
     assert.equal(login.statusCode, 200);
     assert.match(login.body, /Create passkey/);
+    assert.match(login.body, /\/favicon\.ico/);
     assert.match(login.body, /test-token/);
     const links = await app.inject({ method: "GET", url: "/.well-known/assetlinks.json" });
     assert.equal(links.statusCode, 200);

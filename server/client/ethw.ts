@@ -79,14 +79,10 @@ let config: Config;
 let current: StoredAccount | null = null;
 let decimals = 6;
 let lookupTimer = 0;
-let meTimer = 0;
 let userAvatarToken = 0;
 let recipientToken = 0;
 let lookedUp: RecipientLookup | null = null;
 const gravatarCache = new Map<string, string>();
-
-const placeholderAvatar =
-  "https://www.gravatar.com/avatar/0000000000000000000000000000000000000000000000000000000000000000?d=mp&f=y&s=96";
 
 const client = () =>
   createPublicClient({
@@ -191,12 +187,14 @@ async function showUserAvatar(email: string): Promise<void> {
   const token = ++userAvatarToken;
   const trimmed = email.trim();
   if (!trimmed) {
-    me.src = placeholderAvatar;
+    me.hidden = true;
+    me.removeAttribute("src");
     return;
   }
-  const url = await gravatarUrl(trimmed, 96);
+  const url = await gravatarUrl(trimmed, 112);
   if (token !== userAvatarToken) return;
   me.src = url;
+  me.hidden = false;
 }
 
 function amountLabel(): string | null {
@@ -340,18 +338,8 @@ async function openWallet(): Promise<void> {
 }
 
 function setSendAction(registered: boolean): void {
-  if (registered) {
-    sendButton.textContent = "Send";
-    sendButton.disabled = !config.erc20;
-    return;
-  }
-  if (config.escrow && config.erc20) {
-    sendButton.textContent = "Send to escrow";
-    sendButton.disabled = false;
-    return;
-  }
-  sendButton.textContent = "Email send notice";
-  sendButton.disabled = false;
+  sendButton.textContent = "Send";
+  sendButton.disabled = registered ? !config.erc20 : false;
 }
 
 function renderEscrow(list: HTMLElement, rows: EscrowRow[], empty: string, describe: (row: EscrowRow) => string): void {
@@ -626,13 +614,7 @@ switchButton.addEventListener("click", () => {
   wallet.hidden = true;
   setup.hidden = false;
   setStatus("");
-  showUserAvatar(emailInput.value).catch((error: unknown) => setStatus(explain(error)));
-});
-emailInput.addEventListener("input", () => {
-  window.clearTimeout(meTimer);
-  meTimer = window.setTimeout(() => {
-    showUserAvatar(emailInput.value).catch((error: unknown) => setStatus(explain(error)));
-  }, 200);
+  showUserAvatar("").catch((error: unknown) => setStatus(explain(error)));
 });
 recipientInput.addEventListener("input", () => {
   window.clearTimeout(lookupTimer);
@@ -643,8 +625,6 @@ recipientInput.addEventListener("input", () => {
 sendButton.addEventListener("click", () => {
   sendToken().catch((error: unknown) => setStatus(explain(error)));
 });
-
-me.src = placeholderAvatar;
 
 void api<Config>("/ethw/api/config")
   .then(async (loaded) => {

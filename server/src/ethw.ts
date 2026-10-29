@@ -71,6 +71,11 @@ export function registerEthWallet(app: FastifyInstance, config: Config, db: Db):
     return reply.type("application/javascript").send(script);
   });
 
+  app.get("/ragraphic.jpg", async (_request, reply) => {
+    const image = fs.readFileSync(path.join(__dirname, "..", "public", "ragraphic.jpg"));
+    return reply.type("image/jpeg").send(image);
+  });
+
   app.get("/ethw/api/config", async () => ({
     chainId: 84532,
     rpc: "/ethw/api/rpc",
