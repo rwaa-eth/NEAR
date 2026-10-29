@@ -20,7 +20,7 @@ function testApp() {
 describe("API gates", () => {
   it("serves the login page and empty asset links without a token", async () => {
     const app = testApp();
-    const login = await app.inject({ method: "GET", url: "/" });
+    const login = await app.inject({ method: "GET", url: "/login" });
     assert.equal(login.statusCode, 200);
     assert.match(login.body, /Create passkey/);
     assert.match(login.body, /test-token/);

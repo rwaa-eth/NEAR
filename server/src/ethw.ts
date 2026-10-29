@@ -64,10 +64,7 @@ function readAccount(db: Db, accountEmail: string): EthAccount | undefined {
 }
 
 export function registerEthWallet(app: FastifyInstance, config: Config, db: Db): void {
-  app.get("/ethw", async (_request, reply) => {
-    const html = fs.readFileSync(path.join(__dirname, "..", "public", "ethw.html"), "utf8");
-    return reply.type("text/html").send(html);
-  });
+  app.get("/ethw", async (_request, reply) => reply.redirect("/"));
 
   app.get("/ethw.js", async (_request, reply) => {
     const script = fs.readFileSync(path.join(__dirname, "..", "public", "ethw.js"), "utf8");

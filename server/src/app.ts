@@ -101,14 +101,17 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
   });
 
   app.get("/", async (_request, reply) => {
+    const html = fs.readFileSync(path.join(__dirname, "..", "public", "ethw.html"), "utf8");
+    return reply.type("text/html").send(html);
+  });
+
+  app.get("/login", async (_request, reply) => {
     const html = fs
       .readFileSync(path.join(__dirname, "..", "public", "login.html"), "utf8")
       .replaceAll("__API_TOKEN__", config.token)
       .replaceAll("__RP_ID__", config.rpId);
     return reply.type("text/html").send(html);
   });
-
-  app.get("/login", async (_request, reply) => reply.redirect("/"));
 
   app.get("/login.js", async (_request, reply) => {
     const script = fs.readFileSync(path.join(__dirname, "..", "public", "login.js"), "utf8");

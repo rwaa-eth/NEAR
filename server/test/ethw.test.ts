@@ -22,8 +22,11 @@ function testApp() {
 describe("Base Sepolia wallet", () => {
   it("serves the wallet page without the API token", async () => {
     const app = testApp();
-    const page = await app.inject({ method: "GET", url: "/ethw" });
+    const page = await app.inject({ method: "GET", url: "/" });
     assert.equal(page.statusCode, 200);
+    const legacy = await app.inject({ method: "GET", url: "/ethw" });
+    assert.equal(legacy.statusCode, 302);
+    assert.equal(legacy.headers.location, "/");
     assert.match(page.body, /Base Sepolia/);
     assert.match(page.body, /\/ethw\.js/);
     assert.match(page.body, /id="me"/);

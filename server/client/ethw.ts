@@ -217,8 +217,8 @@ function emailSendNotice(email: string, escrowed: boolean): void {
     ? `I'm sending you ${amount} ${config.symbol}. It is held in escrow until you collect it.`
     : `I'm sending you ${amount} ${config.symbol}.`;
   const next = escrowed
-    ? `Create a wallet at ${window.location.origin}/ethw using ${email}, then collect it.`
-    : `Create a wallet at ${window.location.origin}/ethw using ${email} so you can receive it.`;
+    ? `Create a wallet at ${window.location.origin} using ${email}, then collect it.`
+    : `Create a wallet at ${window.location.origin} using ${email} so you can receive it.`;
   const body = [lead, "", next, "", `This is from ${current.email} (${current.address}).`].join("\n");
   const link = document.createElement("a");
   link.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;

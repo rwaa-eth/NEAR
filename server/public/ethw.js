@@ -26183,7 +26183,7 @@ ${prettyStateOverride(stateOverride)}`;
         }
         const subject = `Sending you ${amount} ${config.symbol}`;
         const lead = escrowed ? `I'm sending you ${amount} ${config.symbol}. It is held in escrow until you collect it.` : `I'm sending you ${amount} ${config.symbol}.`;
-        const next = escrowed ? `Create a wallet at ${window.location.origin}/ethw using ${email}, then collect it.` : `Create a wallet at ${window.location.origin}/ethw using ${email} so you can receive it.`;
+        const next = escrowed ? `Create a wallet at ${window.location.origin} using ${email}, then collect it.` : `Create a wallet at ${window.location.origin} using ${email} so you can receive it.`;
         const body = [lead, "", next, "", `This is from ${current.email} (${current.address}).`].join("\n");
         const link = document.createElement("a");
         link.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -26199,7 +26199,7 @@ ${prettyStateOverride(stateOverride)}`;
         addressEl.textContent = account.address;
         explorer.href = `https://sepolia.basescan.org/address/${account.address}`;
         tokenLabel.textContent = config.symbol;
-        gasEl.textContent = config.paymaster ? "Gas on Base Sepolia is sponsored for this RPC." : "The smart account pays gas in ETH. Fund the address on Base Sepolia if a send is rejected.";
+        gasEl.textContent = config.paymaster ? "" : "";
         syncSendButton();
         await import_qrcode.default.toCanvas(qr, account.address, { width: 180, margin: 1 });
         await showUserAvatar(account.email);
