@@ -22,7 +22,15 @@
     .brand { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
     .brand img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex: none; }
     h1 { margin: 0; font-size: 1.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .account { position: relative; flex: none; }
+    .account { position: relative; flex: none; display: flex; align-items: center; gap: 0.55rem; }
+    .account-email {
+      max-width: 12rem;
+      font-size: 0.92rem;
+      color: #4e6558;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .account-trigger {
       display: block;
       padding: 0;
@@ -88,6 +96,7 @@
         <h1>RaOpenwallet</h1>
       </div>
       <div id="account" class="account" hidden>
+        <span id="account-email" class="account-email"></span>
         <button id="account-trigger" class="account-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">
           <img id="me" width="36" height="36" alt="Your Gravatar">
         </button>
@@ -108,7 +117,7 @@
           <input id="otp" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code">
         </label>
         <button id="verify-code" type="button">Verify email</button>
-        <button id="create" type="button" disabled>Create wallet</button>
+        <button id="retry-passkey" type="button" hidden>Retry passkey</button>
         <p id="otp-note" class="muted">We email a code so only the mailbox owner can create this wallet.</p>
       </div>
     </section>
@@ -126,7 +135,7 @@
       <button id="collect" type="button" hidden>Collect</button>
 
       <h2>Waiting for collection</h2>
-      <p class="muted"></p>
+      <p class="muted">Uncollected payments. After one week you can pull them back.</p>
       <ul id="outgoing"></ul>
 
       <h2>Send</h2>

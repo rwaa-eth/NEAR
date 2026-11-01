@@ -76,6 +76,10 @@ export function openDatabase(sqlitePath: string): Db {
       created_at TEXT NOT NULL,
       claimed_at TEXT,
       claim_tx TEXT,
+      deposit_id INTEGER,
+      unlock_at TEXT,
+      refunded_at TEXT,
+      refund_tx TEXT,
       UNIQUE(tx_hash, log_index)
     );
     CREATE TABLE IF NOT EXISTS presence_samples (
@@ -95,5 +99,13 @@ export function openDatabase(sqlitePath: string): Db {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS parcels_owner_account ON parcels(owner_account_id)");
   db.exec("CREATE INDEX IF NOT EXISTS escrow_recipient ON escrow_deposits(recipient_email)");
   db.exec("CREATE INDEX IF NOT EXISTS escrow_sender ON escrow_deposits(sender_email)");
+  const escrowColumns = db.prepare("PRAGMA table_info(escrow_deposits)").all() as Array<{ name: string }>;
+  const ensureEscrowColumn = (name: string, ddl: string) => {
+    if (!escrowColumns.some((column) => column.name === name)) db.exec(ddl);
+  };
+  ensureEscrowColumn("deposit_id", "ALTER TABLE escrow_deposits ADD COLUMN deposit_id INTEGER");
+  ensureEscrowColumn("unlock_at", "ALTER TABLE escrow_deposits ADD COLUMN unlock_at TEXT");
+  ensureEscrowColumn("refunded_at", "ALTER TABLE escrow_deposits ADD COLUMN refunded_at TEXT");
+  ensureEscrowColumn("refund_tx", "ALTER TABLE escrow_deposits ADD COLUMN refund_tx TEXT");
   return db;
 }

@@ -60,14 +60,20 @@ describe("email escrow", () => {
     const hash = emailHash("Ada@Example.com");
     assert.equal(hash, emailHash("ada@example.com"));
     assert.equal(hash.length, 66);
+    const unlockAt = 1_700_000_000;
     const parsed = depositsFromReceipt(
       {
         status: "0x1",
         logs: [
           {
             address: escrow.toUpperCase(),
-            topics: [DEPOSIT_TOPIC, hash, `0x${sender.slice(2).padStart(64, "0")}`],
-            data: `0x${(1_500_000n).toString(16).padStart(64, "0")}`,
+            topics: [
+              DEPOSIT_TOPIC,
+              `0x${(7n).toString(16).padStart(64, "0")}`,
+              hash,
+              `0x${sender.slice(2).padStart(64, "0")}`,
+            ],
+            data: `0x${(1_500_000n).toString(16).padStart(64, "0")}${(BigInt(unlockAt)).toString(16).padStart(64, "0")}`,
             logIndex: "0x2",
           },
         ],
@@ -78,6 +84,8 @@ describe("email escrow", () => {
     assert.equal(parsed.length, 1);
     assert.equal(parsed[0].amount, "1500000");
     assert.equal(parsed[0].from, sender);
+    assert.equal(parsed[0].depositId, 7);
+    assert.equal(parsed[0].unlockAt, unlockAt);
     assert.equal(parsed[0].logIndex, 2);
     assert.equal(depositsFromReceipt({ status: "0x0", logs: [] }, escrow, hash).length, 0);
     assert.equal(depositsFromReceipt({ status: "0x1", logs: [] }, escrow, emailHash("other@example.com")).length, 0);
@@ -85,6 +93,7 @@ describe("email escrow", () => {
 
   it("lists uncollected payments for the sender and the recipient", async () => {
     const { app, db } = appWith();
+    const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
     recordDeposits(db, [
       {
         recipientEmail: "friend@example.com",
@@ -94,6 +103,8 @@ describe("email escrow", () => {
         amount: "1500000",
         txHash: `0x${"cd".repeat(32)}`,
         logIndex: 0,
+        depositId: 1,
+        unlockAt,
       },
     ]);
     const outgoing = await app.inject({ method: "GET", url: "/ethw/api/escrow?email=ada@example.com" });
@@ -101,6 +112,7 @@ describe("email escrow", () => {
     assert.equal(outgoing.json().outgoing.length, 1);
     assert.equal(outgoing.json().outgoing[0].recipientEmail, "friend@example.com");
     assert.equal(outgoing.json().outgoing[0].amount, "1500000");
+    assert.equal(outgoing.json().outgoing[0].reclaimable, false);
     assert.equal(outgoing.json().incoming.length, 0);
     const incoming = await app.inject({ method: "GET", url: "/ethw/api/escrow?email=friend@example.com" });
     assert.equal(incoming.json().incoming[0].senderEmail, "ada@example.com");
@@ -139,6 +151,8 @@ describe("email escrow", () => {
         amount: "1500000",
         txHash: `0x${"cd".repeat(32)}`,
         logIndex: 0,
+        depositId: 2,
+        unlockAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
       },
     ]);
     const release = await app.inject({

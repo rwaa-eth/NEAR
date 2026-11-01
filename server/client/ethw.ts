@@ -31,11 +31,15 @@ type Config = {
 };
 
 type EscrowRow = {
+  id: number;
+  depositId: number | null;
   recipientEmail: string;
   senderEmail: string;
   senderAddress: string;
   amount: string;
   txHash: string;
+  unlockAt: string | null;
+  reclaimable: boolean;
 };
 
 type StoredAccount = {
@@ -48,7 +52,7 @@ type StoredAccount = {
 const emailInput = document.querySelector<HTMLInputElement>("#email")!;
 const sendCodeButton = document.querySelector<HTMLButtonElement>("#send-code")!;
 const verifyCodeButton = document.querySelector<HTMLButtonElement>("#verify-code")!;
-const createButton = document.querySelector<HTMLButtonElement>("#create")!;
+const retryPasskeyButton = document.querySelector<HTMLButtonElement>("#retry-passkey")!;
 const openButton = document.querySelector<HTMLButtonElement>("#open")!;
 const otpBox = document.querySelector<HTMLElement>("#otp-box")!;
 const otpInput = document.querySelector<HTMLInputElement>("#otp")!;
@@ -62,6 +66,7 @@ const ethEl = document.querySelector<HTMLElement>("#eth")!;
 const tokenLabel = document.querySelector<HTMLElement>("#token-label")!;
 const tokenEl = document.querySelector<HTMLElement>("#token")!;
 const accountEl = document.querySelector<HTMLElement>("#account")!;
+const accountEmailEl = document.querySelector<HTMLElement>("#account-email")!;
 const accountTrigger = document.querySelector<HTMLButtonElement>("#account-trigger")!;
 const accountMenu = document.querySelector<HTMLElement>("#account-menu")!;
 const logoutButton = document.querySelector<HTMLButtonElement>("#logout")!;
@@ -204,6 +209,7 @@ async function showUserAvatar(email: string): Promise<void> {
   const trimmed = email.trim();
   if (!trimmed) {
     accountEl.hidden = true;
+    accountEmailEl.textContent = "";
     setAccountMenuOpen(false);
     me.removeAttribute("src");
     return;
@@ -211,7 +217,19 @@ async function showUserAvatar(email: string): Promise<void> {
   const url = await gravatarUrl(trimmed, 72);
   if (token !== userAvatarToken) return;
   me.src = url;
+  accountEmailEl.textContent = trimmed;
   accountEl.hidden = false;
+}
+
+function isPasskeyCancel(error: unknown): boolean {
+  const text = errorText(error).toLowerCase();
+  return (
+    text.includes("cancelled") ||
+    text.includes("canceled") ||
+    text.includes("notallowed") ||
+    text.includes("the operation either timed out") ||
+    text.includes("abort")
+  );
 }
 
 function stopBalanceRefresh(): void {
@@ -336,9 +354,11 @@ async function smartAccount() {
 function clearEmailVerification(): void {
   emailToken = null;
   verifiedEmail = null;
-  createButton.disabled = true;
   otpBox.hidden = true;
   otpInput.value = "";
+  otpInput.disabled = false;
+  retryPasskeyButton.hidden = true;
+  verifyCodeButton.hidden = false;
 }
 
 async function sendCode(): Promise<void> {
@@ -383,8 +403,12 @@ async function verifyCode(): Promise<void> {
     const result = await api<{ email: string; emailToken: string }>("/ethw/api/otp/verify", { email, code });
     emailToken = result.emailToken;
     verifiedEmail = result.email;
-    createButton.disabled = false;
-    setStatus("Email verified. Create the wallet with your passkey.");
+    verifyCodeButton.hidden = true;
+    otpInput.disabled = true;
+    setStatus("Email verified. Setting up your passkey.");
+    await createWallet();
+  } catch (error) {
+    setStatus(explain(error));
   } finally {
     verifyCodeButton.disabled = false;
   }
@@ -400,35 +424,47 @@ async function createWallet(): Promise<void> {
     setStatus("Verify your email before creating a wallet.");
     return;
   }
+  retryPasskeyButton.hidden = true;
   setStatus("Confirm the passkey prompt.");
-  const credential = await createWebAuthnCredential({
-    name: email,
-    authenticatorSelection: {
-      residentKey: "required",
-      requireResidentKey: true,
-      userVerification: "required",
-    },
-  });
-  const account = await toCoinbaseSmartAccount({
-    client: client(),
-    owners: [toWebAuthnAccount({ credential })],
-    version: "1.1",
-  });
-  const saved = await api<{ email: string; address: Address }>("/ethw/api/register", {
-    email,
-    address: account.address,
-    credentialId: credential.id,
-    publicKey: credential.publicKey,
-    emailToken,
-  });
-  clearEmailVerification();
-  setStatus("Wallet created.");
-  await showWallet({
-    email: saved.email,
-    address: saved.address,
-    credentialId: credential.id,
-    publicKey: credential.publicKey,
-  });
+  try {
+    const credential = await createWebAuthnCredential({
+      name: email,
+      authenticatorSelection: {
+        residentKey: "required",
+        requireResidentKey: true,
+        userVerification: "required",
+      },
+    });
+    const account = await toCoinbaseSmartAccount({
+      client: client(),
+      owners: [toWebAuthnAccount({ credential })],
+      version: "1.1",
+    });
+    const saved = await api<{ email: string; address: Address }>("/ethw/api/register", {
+      email,
+      address: account.address,
+      credentialId: credential.id,
+      publicKey: credential.publicKey,
+      emailToken,
+    });
+    clearEmailVerification();
+    otpInput.disabled = false;
+    setStatus("Wallet created.");
+    await showWallet({
+      email: saved.email,
+      address: saved.address,
+      credentialId: credential.id,
+      publicKey: credential.publicKey,
+    });
+  } catch (error) {
+    if (isPasskeyCancel(error)) {
+      setStatus("Passkey setup was cancelled. Retry when you are ready.");
+      retryPasskeyButton.hidden = false;
+      return;
+    }
+    setStatus(explain(error));
+    retryPasskeyButton.hidden = false;
+  }
 }
 
 async function openWallet(): Promise<void> {
@@ -451,7 +487,22 @@ function setSendAction(registered: boolean): void {
   sendButton.disabled = registered ? !config.erc20 : false;
 }
 
-function renderEscrow(list: HTMLElement, rows: EscrowRow[], empty: string, describe: (row: EscrowRow) => string): void {
+function unlockLabel(row: EscrowRow): string {
+  if (!row.unlockAt) return "pull-back after one week";
+  const unlockMs = Date.parse(row.unlockAt);
+  if (Number.isNaN(unlockMs)) return "pull-back after one week";
+  if (unlockMs <= Date.now()) return "ready to pull back";
+  const days = Math.max(1, Math.ceil((unlockMs - Date.now()) / (24 * 60 * 60 * 1000)));
+  return days === 1 ? "pull-back in 1 day" : `pull-back in ${days} days`;
+}
+
+function renderEscrow(
+  list: HTMLElement,
+  rows: EscrowRow[],
+  empty: string,
+  describe: (row: EscrowRow) => string,
+  options: { reclaim?: boolean } = {},
+): void {
   list.replaceChildren();
   if (rows.length === 0) {
     const item = document.createElement("li");
@@ -468,6 +519,19 @@ function renderEscrow(list: HTMLElement, rows: EscrowRow[], empty: string, descr
     link.rel = "noopener";
     link.textContent = "transaction";
     item.append(link);
+    if (options.reclaim) {
+      item.append(` · ${unlockLabel(row)}`);
+      if (row.reclaimable && row.depositId !== null) {
+        item.append(" · ");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Pull back";
+        button.addEventListener("click", () => {
+          reclaimEscrow(row).catch((error: unknown) => setStatus(explain(error)));
+        });
+        item.append(button);
+      }
+    }
     list.append(item);
   }
 }
@@ -488,11 +552,15 @@ async function loadEscrow(): Promise<void> {
   renderEscrow(incomingList, result.incoming, "Nothing to collect.", (row) => {
     return `${tokenAmount(row.amount)} from ${row.senderEmail}`;
   });
-  renderEscrow(outgoingList, result.outgoing, "No payments waiting.", (row) => {
-    return `${tokenAmount(row.amount)} to ${row.recipientEmail} — not collected yet`;
-  });
+  renderEscrow(
+    outgoingList,
+    result.outgoing,
+    "No payments waiting.",
+    (row) => `${tokenAmount(row.amount)} to ${row.recipientEmail} — not collected yet`,
+    { reclaim: true },
+  );
   incomingNote.textContent = config.escrow
-    ? ""
+    ? "Payments held in escrow for this email."
     : result.incoming.length > 0
       ? "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected."
       : "Set ESCROW_ADDRESS on the server to hold payments for emails that have not registered.";
@@ -501,6 +569,53 @@ async function loadEscrow(): Promise<void> {
     const total = result.incoming.reduce((sum, row) => sum + BigInt(row.amount), 0n);
     setStatus(`You have ${formatUnits(total, decimals)} ${config.symbol} to collect.`);
   }
+}
+
+async function reclaimEscrow(row: EscrowRow): Promise<void> {
+  if (!current || !config.escrow || row.depositId === null) return;
+  if (!row.reclaimable) {
+    setStatus("That payment can be pulled back after one week.");
+    return;
+  }
+  setStatus("Confirm the passkey to pull the payment back.");
+  const account = await smartAccount();
+  const bundler = createBundlerClient({
+    client: client(),
+    transport: http(new URL(config.rpc, window.location.origin).toString()),
+    chain: baseSepolia,
+    paymaster: config.paymaster ? true : undefined,
+  });
+  const hash = await bundler.sendUserOperation({
+    account,
+    calls: [
+      {
+        to: config.escrow,
+        data: encodeFunctionData({
+          abi: [
+            {
+              type: "function",
+              name: "reclaim",
+              stateMutability: "nonpayable",
+              inputs: [{ name: "depositId", type: "uint256" }],
+              outputs: [],
+            },
+          ],
+          functionName: "reclaim",
+          args: [BigInt(row.depositId)],
+        }),
+      },
+    ],
+  });
+  setStatus("Waiting for the pull-back.");
+  const receipt = await bundler.waitForUserOperationReceipt({ hash });
+  await api("/ethw/api/escrow/reclaim", {
+    senderEmail: current.email,
+    depositId: row.depositId,
+    txHash: receipt.receipt.transactionHash,
+  });
+  setStatus(`Pulled back. ${receipt.receipt.transactionHash}`);
+  await refreshBalances();
+  await loadEscrow();
 }
 
 async function collectEscrow(): Promise<void> {
@@ -700,7 +815,6 @@ async function sendToken(): Promise<void> {
   }
 }
 
-createButton.disabled = true;
 sendCodeButton.disabled = true;
 openButton.disabled = true;
 
@@ -710,14 +824,17 @@ sendCodeButton.addEventListener("click", () => {
 verifyCodeButton.addEventListener("click", () => {
   verifyCode().catch((error: unknown) => setStatus(explain(error)));
 });
-createButton.addEventListener("click", () => {
+retryPasskeyButton.addEventListener("click", () => {
   createWallet().catch((error: unknown) => setStatus(explain(error)));
 });
 openButton.addEventListener("click", () => {
   openWallet().catch((error: unknown) => setStatus(explain(error)));
 });
 emailInput.addEventListener("input", () => {
-  if (verifiedEmail && verifiedEmail !== emailInput.value.trim().toLowerCase()) clearEmailVerification();
+  if (verifiedEmail && verifiedEmail !== emailInput.value.trim().toLowerCase()) {
+    clearEmailVerification();
+    otpInput.disabled = false;
+  }
 });
 collectButton.addEventListener("click", () => {
   collectEscrow().catch((error: unknown) => setStatus(explain(error)));

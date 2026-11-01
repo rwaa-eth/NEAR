@@ -2,24 +2,31 @@ import { keccak_256 } from "@noble/hashes/sha3";
 import type { Config } from "./config";
 import type { Db } from "./db";
 
+export const CLAIM_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
+
 export type EscrowRow = {
   id: number;
+  depositId: number | null;
   recipientEmail: string;
   senderEmail: string;
   senderAddress: string;
   amount: string;
   txHash: string;
   createdAt: string;
+  unlockAt: string | null;
+  reclaimable: boolean;
 };
 
 type DepositRow = {
   id: number;
+  deposit_id: number | null;
   recipient_email: string;
   sender_email: string;
   sender_address: string;
   amount: string;
   tx_hash: string;
   created_at: string;
+  unlock_at: string | null;
 };
 
 export type ReceiptLog = {
@@ -36,9 +43,11 @@ export type Receipt = {
 };
 
 export type ParsedDeposit = {
+  depositId: number;
   emailHash: string;
   from: string;
   amount: string;
+  unlockAt: number;
   logIndex: number;
 };
 
@@ -47,21 +56,29 @@ function keccakHex(data: Uint8Array | string): string {
   return `0x${Buffer.from(keccak_256(bytes)).toString("hex")}`;
 }
 
-export const DEPOSIT_TOPIC = keccakHex("Deposited(bytes32,address,uint256)");
+export const DEPOSIT_TOPIC = keccakHex("Deposited(uint256,bytes32,address,uint256,uint64)");
+export const RECLAIM_TOPIC = keccakHex("Reclaimed(uint256,address,uint256)");
 
 export function emailHash(email: string): string {
   return keccakHex(email.trim().toLowerCase());
 }
 
 function toRow(row: DepositRow): EscrowRow {
+  const unlockAt = row.unlock_at;
+  const reclaimable = Boolean(
+    row.deposit_id !== null && unlockAt && Date.parse(unlockAt) <= Date.now(),
+  );
   return {
     id: row.id,
+    depositId: row.deposit_id,
     recipientEmail: row.recipient_email,
     senderEmail: row.sender_email,
     senderAddress: row.sender_address,
     amount: row.amount,
     txHash: row.tx_hash,
     createdAt: row.created_at,
+    unlockAt,
+    reclaimable,
   };
 }
 
@@ -72,17 +89,39 @@ export function depositsFromReceipt(receipt: Receipt, escrow: string, expectedHa
   const found: ParsedDeposit[] = [];
   for (const log of receipt.logs ?? []) {
     if (log.address.toLowerCase() !== contract) continue;
-    if (log.topics.length < 3) continue;
+    if (log.topics.length < 4) continue;
     if (log.topics[0].toLowerCase() !== DEPOSIT_TOPIC) continue;
-    if (log.topics[1].toLowerCase() !== wanted) continue;
+    if (log.topics[2].toLowerCase() !== wanted) continue;
+    const data = log.data.replace(/^0x/, "");
+    if (data.length < 128) continue;
+    const amount = BigInt(`0x${data.slice(0, 64)}`).toString(10);
+    const unlockAt = Number(BigInt(`0x${data.slice(64, 128)}`));
     found.push({
+      depositId: Number(BigInt(log.topics[1])),
       emailHash: wanted,
-      from: `0x${log.topics[2].slice(-40).toLowerCase()}`,
-      amount: BigInt(log.data).toString(10),
+      from: `0x${log.topics[3].slice(-40).toLowerCase()}`,
+      amount,
+      unlockAt,
       logIndex: log.logIndex === undefined ? found.length : Number(BigInt(log.logIndex)),
     });
   }
   return found;
+}
+
+export function reclaimFromReceipt(receipt: Receipt, escrow: string, depositId: number, sender: string): boolean {
+  if (!receipt.status || BigInt(receipt.status) !== 1n) return false;
+  const contract = escrow.toLowerCase();
+  const idTopic = `0x${BigInt(depositId).toString(16).padStart(64, "0")}`;
+  const fromTopic = `0x${sender.slice(2).toLowerCase().padStart(64, "0")}`;
+  for (const log of receipt.logs ?? []) {
+    if (log.address.toLowerCase() !== contract) continue;
+    if (log.topics.length < 3) continue;
+    if (log.topics[0].toLowerCase() !== RECLAIM_TOPIC) continue;
+    if (log.topics[1].toLowerCase() !== idTopic) continue;
+    if (log.topics[2].toLowerCase() !== fromTopic) continue;
+    return true;
+  }
+  return false;
 }
 
 export async function fetchReceipt(rpcUrl: string, txHash: string): Promise<Receipt> {
@@ -112,12 +151,14 @@ export function recordDeposits(
     amount: string;
     txHash: string;
     logIndex: number;
+    depositId: number;
+    unlockAt: number;
   }>,
 ): number {
   const insert = db.prepare(
     `INSERT OR IGNORE INTO escrow_deposits
-      (recipient_email, email_hash, sender_email, sender_address, amount, tx_hash, log_index, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (recipient_email, email_hash, sender_email, sender_address, amount, tx_hash, log_index, created_at, deposit_id, unlock_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const createdAt = new Date().toISOString();
   let count = 0;
@@ -132,6 +173,8 @@ export function recordDeposits(
         row.txHash,
         row.logIndex,
         createdAt,
+        row.depositId,
+        new Date(row.unlockAt * 1000).toISOString(),
       );
       count += info.changes;
     }
@@ -143,14 +186,18 @@ export function recordDeposits(
 export function listEscrow(db: Db, email: string): { incoming: EscrowRow[]; outgoing: EscrowRow[] } {
   const incoming = db
     .prepare(
-      `SELECT id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at
-       FROM escrow_deposits WHERE recipient_email = ? AND claimed_at IS NULL ORDER BY id`,
+      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at
+       FROM escrow_deposits
+       WHERE recipient_email = ? AND claimed_at IS NULL AND refunded_at IS NULL
+       ORDER BY id`,
     )
     .all(email) as DepositRow[];
   const outgoing = db
     .prepare(
-      `SELECT id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at
-       FROM escrow_deposits WHERE sender_email = ? AND claimed_at IS NULL ORDER BY id`,
+      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at
+       FROM escrow_deposits
+       WHERE sender_email = ? AND claimed_at IS NULL AND refunded_at IS NULL
+       ORDER BY id`,
     )
     .all(email) as DepositRow[];
   return { incoming: incoming.map(toRow), outgoing: outgoing.map(toRow) };
@@ -158,8 +205,31 @@ export function listEscrow(db: Db, email: string): { incoming: EscrowRow[]; outg
 
 export function markClaimed(db: Db, email: string, claimTx: string): void {
   db.prepare(
-    `UPDATE escrow_deposits SET claimed_at = ?, claim_tx = ? WHERE recipient_email = ? AND claimed_at IS NULL`,
+    `UPDATE escrow_deposits SET claimed_at = ?, claim_tx = ?
+     WHERE recipient_email = ? AND claimed_at IS NULL AND refunded_at IS NULL`,
   ).run(new Date().toISOString(), claimTx, email);
+}
+
+export function markRefunded(db: Db, depositId: number, refundTx: string): void {
+  db.prepare(
+    `UPDATE escrow_deposits SET refunded_at = ?, refund_tx = ?
+     WHERE deposit_id = ? AND claimed_at IS NULL AND refunded_at IS NULL`,
+  ).run(new Date().toISOString(), refundTx, depositId);
+}
+
+export function readOpenDeposit(
+  db: Db,
+  depositId: number,
+): { senderEmail: string; senderAddress: string; unlockAt: string | null } | undefined {
+  return db
+    .prepare(
+      `SELECT sender_email as senderEmail, sender_address as senderAddress, unlock_at as unlockAt
+       FROM escrow_deposits
+       WHERE deposit_id = ? AND claimed_at IS NULL AND refunded_at IS NULL`,
+    )
+    .get(depositId) as
+    | { senderEmail: string; senderAddress: string; unlockAt: string | null }
+    | undefined;
 }
 
 export async function releaseOnChain(config: Config, hash: string, to: string): Promise<string> {

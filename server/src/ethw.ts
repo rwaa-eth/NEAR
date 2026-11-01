@@ -4,7 +4,18 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Config } from "./config";
 import type { Db } from "./db";
-import { depositsFromReceipt, emailHash, fetchReceipt, listEscrow, markClaimed, recordDeposits, releaseOnChain } from "./escrow";
+import {
+  depositsFromReceipt,
+  emailHash,
+  fetchReceipt,
+  listEscrow,
+  markClaimed,
+  markRefunded,
+  readOpenDeposit,
+  reclaimFromReceipt,
+  recordDeposits,
+  releaseOnChain,
+} from "./escrow";
 import { mailConfigured, sendMail } from "./mail";
 import { consumeEmailSession, issueOtp, verifyOtp } from "./otp";
 
@@ -33,6 +44,11 @@ const depositBody = z.object({
 });
 
 const releaseBody = z.object({ email });
+const reclaimBody = z.object({
+  senderEmail: email,
+  depositId: z.number().int().nonnegative(),
+  txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+});
 
 export type EthAccount = {
   email: string;
@@ -199,8 +215,33 @@ export function registerEthWallet(app: FastifyInstance, config: Config, db: Db):
         amount: deposit.amount,
         txHash: body.txHash.toLowerCase(),
         logIndex: deposit.logIndex,
+        depositId: deposit.depositId,
+        unlockAt: deposit.unlockAt,
       })),
     );
+    return listEscrow(db, sender.email);
+  });
+
+  app.post("/ethw/api/escrow/reclaim", async (request) => {
+    if (!config.escrowAddress) throw statusError(400, "Set ESCROW_ADDRESS on the server");
+    const body = reclaimBody.parse(request.body);
+    const sender = readAccount(db, body.senderEmail);
+    if (!sender) throw statusError(404, "sender email is not registered");
+    const open = readOpenDeposit(db, body.depositId);
+    if (!open || open.senderEmail !== sender.email) throw statusError(404, "that payment is not waiting");
+    if (!open.unlockAt || Date.parse(open.unlockAt) > Date.now()) {
+      throw statusError(400, "that payment can be pulled back after one week");
+    }
+    let receipt;
+    try {
+      receipt = await fetchReceipt(config.baseRpcUrl, body.txHash);
+    } catch (error) {
+      throw statusError(502, error instanceof Error ? error.message : "could not read the reclaim");
+    }
+    if (!reclaimFromReceipt(receipt, config.escrowAddress, body.depositId, sender.address)) {
+      throw statusError(400, "that transaction does not reclaim this payment");
+    }
+    markRefunded(db, body.depositId, body.txHash.toLowerCase());
     return listEscrow(db, sender.email);
   });
 
