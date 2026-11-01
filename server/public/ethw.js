@@ -26039,8 +26039,13 @@ ${prettyStateOverride(stateOverride)}`;
       init_account_abstraction();
       var import_qrcode = __toESM(require_browser());
       var emailInput = document.querySelector("#email");
+      var sendCodeButton = document.querySelector("#send-code");
+      var verifyCodeButton = document.querySelector("#verify-code");
       var createButton = document.querySelector("#create");
       var openButton = document.querySelector("#open");
+      var otpBox = document.querySelector("#otp-box");
+      var otpInput = document.querySelector("#otp");
+      var otpNote = document.querySelector("#otp-note");
       var setup = document.querySelector("#setup");
       var wallet = document.querySelector("#wallet");
       var addressEl = document.querySelector("#address");
@@ -26049,8 +26054,10 @@ ${prettyStateOverride(stateOverride)}`;
       var ethEl = document.querySelector("#eth");
       var tokenLabel = document.querySelector("#token-label");
       var tokenEl = document.querySelector("#token");
-      var refreshButton = document.querySelector("#refresh");
-      var switchButton = document.querySelector("#switch");
+      var accountEl = document.querySelector("#account");
+      var accountTrigger = document.querySelector("#account-trigger");
+      var accountMenu = document.querySelector("#account-menu");
+      var logoutButton = document.querySelector("#logout");
       var me = document.querySelector("#me");
       var recipientInput = document.querySelector("#recipient");
       var recipientAvatar = document.querySelector("#recipient-avatar");
@@ -26067,9 +26074,12 @@ ${prettyStateOverride(stateOverride)}`;
       var current = null;
       var decimals = 6;
       var lookupTimer = 0;
+      var balanceTimer = 0;
       var userAvatarToken = 0;
       var recipientToken = 0;
       var lookedUp = null;
+      var emailToken = null;
+      var verifiedEmail = null;
       var gravatarCache = /* @__PURE__ */ new Map();
       var client = () => createPublicClient({
         chain: baseSepolia,
@@ -26156,18 +26166,34 @@ ${prettyStateOverride(stateOverride)}`;
         gravatarCache.set(key, url);
         return url;
       }
+      function setAccountMenuOpen(open) {
+        accountMenu.hidden = !open;
+        accountTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+      }
       async function showUserAvatar(email) {
         const token = ++userAvatarToken;
         const trimmed = email.trim();
         if (!trimmed) {
-          me.hidden = true;
+          accountEl.hidden = true;
+          setAccountMenuOpen(false);
           me.removeAttribute("src");
           return;
         }
-        const url = await gravatarUrl(trimmed, 112);
+        const url = await gravatarUrl(trimmed, 72);
         if (token !== userAvatarToken) return;
         me.src = url;
-        me.hidden = false;
+        accountEl.hidden = false;
+      }
+      function stopBalanceRefresh() {
+        window.clearInterval(balanceTimer);
+        balanceTimer = 0;
+      }
+      function startBalanceRefresh() {
+        stopBalanceRefresh();
+        balanceTimer = window.setInterval(() => {
+          if (!current || document.hidden) return;
+          refreshBalances({ quiet: true }).catch(() => void 0);
+        }, 1e4);
       }
       function amountLabel() {
         const raw = amountInput.value.trim();
@@ -26205,11 +26231,25 @@ ${prettyStateOverride(stateOverride)}`;
         await showUserAvatar(account.email);
         await refreshBalances();
         await loadEscrow();
+        startBalanceRefresh();
       }
-      async function refreshBalances() {
+      function logout() {
+        current = null;
+        stopBalanceRefresh();
+        window.localStorage.removeItem("ethw.email");
+        wallet.hidden = true;
+        setup.hidden = false;
+        clearEmailVerification();
+        setAccountMenuOpen(false);
+        setStatus("");
+        showUserAvatar("").catch((error) => setStatus(explain(error)));
+      }
+      async function refreshBalances(options = {}) {
         if (!current) return;
-        ethEl.textContent = "\u2026";
-        tokenEl.textContent = "\u2026";
+        if (!options.quiet) {
+          ethEl.textContent = "\u2026";
+          tokenEl.textContent = "\u2026";
+        }
         try {
           const rpc = client();
           const wei = await rpc.getBalance({ address: current.address });
@@ -26231,6 +26271,7 @@ ${prettyStateOverride(stateOverride)}`;
           });
           tokenEl.textContent = formatUnits(raw, decimals);
         } catch (error) {
+          if (options.quiet) return;
           ethEl.textContent = "unavailable";
           tokenEl.textContent = "unavailable";
           setStatus(explain(error));
@@ -26248,10 +26289,66 @@ ${prettyStateOverride(stateOverride)}`;
           version: "1.1"
         });
       }
+      function clearEmailVerification() {
+        emailToken = null;
+        verifiedEmail = null;
+        createButton.disabled = true;
+        otpBox.hidden = true;
+        otpInput.value = "";
+      }
+      async function sendCode() {
+        const email = emailInput.value.trim();
+        if (!email) {
+          setStatus("Enter an email.");
+          return;
+        }
+        if (!config.mailReady) {
+          setStatus("Email sending is not configured on the server.");
+          return;
+        }
+        clearEmailVerification();
+        setStatus("Sending a verification code.");
+        sendCodeButton.disabled = true;
+        try {
+          const result = await api("/ethw/api/otp/send", { email });
+          otpBox.hidden = false;
+          otpNote.textContent = result.devCode ? `Dev mode code: ${result.devCode}` : "We emailed a code so only the mailbox owner can create this wallet.";
+          setStatus("Enter the code from your email.");
+          otpInput.focus();
+        } finally {
+          sendCodeButton.disabled = false;
+        }
+      }
+      async function verifyCode() {
+        const email = emailInput.value.trim();
+        const code = otpInput.value.trim();
+        if (!email) {
+          setStatus("Enter an email.");
+          return;
+        }
+        if (!/^\d{6}$/.test(code)) {
+          setStatus("Enter the 6-digit code.");
+          return;
+        }
+        verifyCodeButton.disabled = true;
+        try {
+          const result = await api("/ethw/api/otp/verify", { email, code });
+          emailToken = result.emailToken;
+          verifiedEmail = result.email;
+          createButton.disabled = false;
+          setStatus("Email verified. Create the wallet with your passkey.");
+        } finally {
+          verifyCodeButton.disabled = false;
+        }
+      }
       async function createWallet() {
         const email = emailInput.value.trim();
         if (!email) {
           setStatus("Enter an email.");
+          return;
+        }
+        if (!emailToken || verifiedEmail !== email.trim().toLowerCase()) {
+          setStatus("Verify your email before creating a wallet.");
           return;
         }
         setStatus("Confirm the passkey prompt.");
@@ -26272,8 +26369,10 @@ ${prettyStateOverride(stateOverride)}`;
           email,
           address: account.address,
           credentialId: credential.id,
-          publicKey: credential.publicKey
+          publicKey: credential.publicKey,
+          emailToken
         });
+        clearEmailVerification();
         setStatus("Wallet created.");
         await showWallet({
           email: saved.email,
@@ -26536,26 +26635,40 @@ ${prettyStateOverride(stateOverride)}`;
         }
       }
       createButton.disabled = true;
+      sendCodeButton.disabled = true;
       openButton.disabled = true;
+      sendCodeButton.addEventListener("click", () => {
+        sendCode().catch((error) => setStatus(explain(error)));
+      });
+      verifyCodeButton.addEventListener("click", () => {
+        verifyCode().catch((error) => setStatus(explain(error)));
+      });
       createButton.addEventListener("click", () => {
         createWallet().catch((error) => setStatus(explain(error)));
       });
       openButton.addEventListener("click", () => {
         openWallet().catch((error) => setStatus(explain(error)));
       });
-      refreshButton.addEventListener("click", () => {
-        refreshBalances().then(() => loadEscrow()).catch((error) => setStatus(explain(error)));
+      emailInput.addEventListener("input", () => {
+        if (verifiedEmail && verifiedEmail !== emailInput.value.trim().toLowerCase()) clearEmailVerification();
       });
       collectButton.addEventListener("click", () => {
         collectEscrow().catch((error) => setStatus(explain(error)));
       });
-      switchButton.addEventListener("click", () => {
-        current = null;
-        window.localStorage.removeItem("ethw.email");
-        wallet.hidden = true;
-        setup.hidden = false;
-        setStatus("");
-        showUserAvatar("").catch((error) => setStatus(explain(error)));
+      accountTrigger.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setAccountMenuOpen(accountMenu.hidden);
+      });
+      logoutButton.addEventListener("click", () => {
+        logout();
+      });
+      document.addEventListener("click", () => {
+        if (!accountMenu.hidden) setAccountMenuOpen(false);
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && current) {
+          refreshBalances({ quiet: true }).catch(() => void 0);
+        }
       });
       recipientInput.addEventListener("input", () => {
         window.clearTimeout(lookupTimer);
@@ -26568,8 +26681,11 @@ ${prettyStateOverride(stateOverride)}`;
       });
       void api("/ethw/api/config").then(async (loaded) => {
         config = loaded;
-        createButton.disabled = false;
+        sendCodeButton.disabled = !config.mailReady;
         openButton.disabled = false;
+        if (!config.mailReady) {
+          setStatus("Set RESEND_API_KEY or SMTP_URL on the server to verify new wallets.");
+        }
         const saved = window.localStorage.getItem("ethw.email");
         if (!saved) return;
         emailInput.value = saved;

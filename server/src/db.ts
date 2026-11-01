@@ -51,6 +51,19 @@ export function openDatabase(sqlitePath: string): Db {
       public_key TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS email_otps (
+      email TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS email_sessions (
+      token_hash TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS escrow_deposits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       recipient_email TEXT NOT NULL,

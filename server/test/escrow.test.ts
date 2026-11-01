@@ -18,10 +18,41 @@ function appWith(extra: Record<string, string> = {}) {
     ERC20_SYMBOL: "USDT",
     ESCROW_ADDRESS: "",
     ESCROW_OPERATOR_KEY: "",
+    EMAIL_DEV_MODE: "true",
+    RESEND_API_KEY: "",
+    SMTP_URL: "",
     ...extra,
   });
   const db = openDatabase(":memory:");
   return { app: buildApp(config, db), db };
+}
+
+async function registerVerified(
+  app: ReturnType<typeof appWith>["app"],
+  email: string,
+  accountAddress: string,
+  credentialId: string,
+): Promise<void> {
+  const sent = await app.inject({ method: "POST", url: "/ethw/api/otp/send", payload: { email } });
+  assert.equal(sent.statusCode, 200);
+  const verified = await app.inject({
+    method: "POST",
+    url: "/ethw/api/otp/verify",
+    payload: { email, code: sent.json().devCode },
+  });
+  assert.equal(verified.statusCode, 200);
+  const created = await app.inject({
+    method: "POST",
+    url: "/ethw/api/register",
+    payload: {
+      email,
+      address: accountAddress,
+      credentialId,
+      publicKey,
+      emailToken: verified.json().emailToken,
+    },
+  });
+  assert.equal(created.statusCode, 200);
 }
 
 describe("email escrow", () => {
@@ -98,16 +129,7 @@ describe("email escrow", () => {
       },
     });
     assert.equal(missing.statusCode, 404);
-    await app.inject({
-      method: "POST",
-      url: "/ethw/api/register",
-      payload: {
-        email: "friend@example.com",
-        address: "0x4444444444444444444444444444444444444444",
-        credentialId: "credential-friend",
-        publicKey,
-      },
-    });
+    await registerVerified(app, "friend@example.com", "0x4444444444444444444444444444444444444444", "credential-friend");
     recordDeposits(db, [
       {
         recipientEmail: "friend@example.com",

@@ -17,6 +17,10 @@ export interface Config {
   basePaymaster: boolean;
   escrowAddress: string;
   escrowOperatorKey: string;
+  emailFrom: string;
+  resendApiKey: string;
+  smtpUrl: string;
+  emailDevMode: boolean;
 }
 
 function androidOrigin(fingerprint: string): string {
@@ -51,5 +55,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     basePaymaster: env.BASE_PAYMASTER === "true" || env.BASE_PAYMASTER === "1",
     escrowAddress: (env.ESCROW_ADDRESS ?? "").trim(),
     escrowOperatorKey: (env.ESCROW_OPERATOR_KEY ?? "").trim(),
+    emailFrom: (env.EMAIL_FROM ?? "RaOpenwallet <noreply@raopenwallet.org>").trim(),
+    resendApiKey: (env.RESEND_API_KEY ?? "").trim(),
+    smtpUrl: (env.SMTP_URL ?? "").trim(),
+    emailDevMode: env.EMAIL_DEV_MODE === "true" || env.EMAIL_DEV_MODE === "1",
   };
 }

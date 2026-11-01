@@ -5,6 +5,8 @@ import { z } from "zod";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import { depositsFromReceipt, emailHash, fetchReceipt, listEscrow, markClaimed, recordDeposits, releaseOnChain } from "./escrow";
+import { mailConfigured, sendMail } from "./mail";
+import { consumeEmailSession, issueOtp, verifyOtp } from "./otp";
 
 const email = z.string().trim().email().transform((value) => value.toLowerCase());
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
@@ -15,6 +17,13 @@ const registerBody = z.object({
   address,
   credentialId: z.string().trim().min(8).max(512),
   publicKey,
+  emailToken: z.string().trim().min(16).max(256),
+});
+
+const otpSendBody = z.object({ email });
+const otpVerifyBody = z.object({
+  email,
+  code: z.string().trim().regex(/^\d{6}$/),
 });
 
 const depositBody = z.object({
@@ -83,6 +92,7 @@ export function registerEthWallet(app: FastifyInstance, config: Config, db: Db):
     symbol: config.erc20Symbol,
     paymaster: config.basePaymaster,
     escrow: config.escrowAddress || null,
+    mailReady: mailConfigured(config),
   }));
 
   app.get("/ethw/api/account", async (request) => {
@@ -90,6 +100,45 @@ export function registerEthWallet(app: FastifyInstance, config: Config, db: Db):
     const account = readAccount(db, query.email);
     if (!account) return { registered: false };
     return { registered: true, ...account };
+  });
+
+  app.post("/ethw/api/otp/send", async (request) => {
+    if (!mailConfigured(config)) throw statusError(503, "email sending is not configured on the server");
+    const body = otpSendBody.parse(request.body);
+    if (readAccount(db, body.email)) throw statusError(409, "that email already has a wallet; open it instead");
+    let issued: { code: string; cooldownMs: number };
+    try {
+      issued = issueOtp(db, body.email);
+    } catch (error) {
+      const known = error as Error & { statusCode?: number };
+      throw statusError(known.statusCode ?? 500, known.message);
+    }
+    try {
+      await sendMail(config, {
+        to: body.email,
+        subject: "Your RaOpenwallet code",
+        text: `Your RaOpenwallet verification code is ${issued.code}.\n\nIt expires in 10 minutes.`,
+      });
+    } catch (error) {
+      db.prepare("DELETE FROM email_otps WHERE email = ?").run(body.email);
+      throw statusError(502, error instanceof Error ? error.message : "could not send the email");
+    }
+    return {
+      sent: true,
+      cooldownMs: issued.cooldownMs,
+      ...(config.emailDevMode ? { devCode: issued.code } : {}),
+    };
+  });
+
+  app.post("/ethw/api/otp/verify", async (request) => {
+    const body = otpVerifyBody.parse(request.body);
+    try {
+      const emailToken = verifyOtp(db, body.email, body.code);
+      return { email: body.email, emailToken };
+    } catch (error) {
+      const known = error as Error & { statusCode?: number };
+      throw statusError(known.statusCode ?? 500, known.message);
+    }
   });
 
   app.post("/ethw/api/register", async (request) => {
@@ -100,6 +149,12 @@ export function registerEthWallet(app: FastifyInstance, config: Config, db: Db):
         throw statusError(409, "that email is already registered");
       }
       return { email: existing.email, address: existing.address };
+    }
+    try {
+      consumeEmailSession(db, body.email, body.emailToken);
+    } catch (error) {
+      const known = error as Error & { statusCode?: number };
+      throw statusError(known.statusCode ?? 500, known.message);
     }
     const taken = db.prepare("SELECT email FROM eth_accounts WHERE lower(address) = lower(?)").get(body.address) as
       | { email: string }

@@ -6,80 +6,146 @@
   <title>RaOpenwallet</title>
   <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
   <style>
-    body { font-family: Georgia, serif; margin: 2rem auto; max-width: 40rem; color: #14241c; background: #f4f7f4; }
-    .brand { display: flex; align-items: center; gap: 0.85rem; margin-bottom: 0.3rem; }
-    .brand img { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; flex: none; }
-    h1 { margin: 0; font-size: 1.9rem; }
+    body { font-family: Georgia, serif; margin: 0; color: #14241c; background: #f4f7f4; }
+    .page { margin: 0 auto; max-width: 40rem; padding: 1.1rem 1.2rem 2rem; }
+    .lozenge {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+      margin: 0 0 1.2rem;
+      padding: 0.45rem 0.55rem 0.45rem 0.55rem;
+      border-radius: 999px;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(20, 36, 28, 0.08), 0 0 0 1px rgba(20, 36, 28, 0.08);
+    }
+    .brand { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+    .brand img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex: none; }
+    h1 { margin: 0; font-size: 1.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .account { position: relative; flex: none; }
+    .account-trigger {
+      display: block;
+      padding: 0;
+      margin: 0;
+      border: 0;
+      background: transparent;
+      border-radius: 50%;
+      cursor: pointer;
+      line-height: 0;
+    }
+    .account-trigger img {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #d5e2d8;
+      box-shadow: 0 0 0 2px #fff;
+    }
+    .account-menu {
+      position: absolute;
+      top: calc(100% + 0.45rem);
+      right: 0;
+      min-width: 9rem;
+      padding: 0.35rem;
+      border-radius: 0.75rem;
+      background: #fff;
+      box-shadow: 0 8px 24px rgba(20, 36, 28, 0.16), 0 0 0 1px rgba(20, 36, 28, 0.08);
+      z-index: 20;
+    }
+    .account-menu button {
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: 0.55rem 0.7rem;
+      text-align: left;
+      border: 0;
+      border-radius: 0.55rem;
+      background: transparent;
+      cursor: pointer;
+    }
+    .account-menu button:hover { background: #eef4ef; }
     .with-avatar { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.3rem; }
     .with-avatar input { margin-top: 0; }
     .with-avatar img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #d5e2d8; flex: none; }
-    .receive { display: flex; align-items: flex-start; gap: 0.9rem; margin-top: 0.6rem; }
-    .receive canvas { background: white; margin: 0; }
-    .receive img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; background: #d5e2d8; flex: none; }
+    canvas { background: white; margin-top: 0.6rem; }
     p, label { line-height: 1.4; }
     label { display: block; margin-top: 0.9rem; }
     input { font: inherit; width: 100%; box-sizing: border-box; padding: 0.55rem 0.7rem; margin-top: 0.3rem; }
     button { font: inherit; margin: 0.8rem 0.5rem 0 0; padding: 0.6rem 0.9rem; }
     code, .mono { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
     #status { white-space: pre-wrap; }
-    #wallet { margin-top: 1.4rem; }
+    #wallet { margin-top: 0.4rem; }
     .muted { color: #4e6558; }
     ul { padding-left: 1.2rem; }
     li { margin: 0.35rem 0; }
   </style>
 </head>
 <body>
-  <div class="brand">
-    <img src="/ragraphic.jpg" width="56" height="56" alt="RaOpenwallet">
-    <h1>RaOpenwallet</h1>
-  </div>
-  <p></p>
+  <div class="page">
+    <header class="lozenge">
+      <div class="brand">
+        <img src="/ragraphic.jpg" width="40" height="40" alt="RaOpenwallet">
+        <h1>RaOpenwallet</h1>
+      </div>
+      <div id="account" class="account" hidden>
+        <button id="account-trigger" class="account-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">
+          <img id="me" width="36" height="36" alt="Your Gravatar">
+        </button>
+        <div id="account-menu" class="account-menu" role="menu" hidden>
+          <button id="logout" type="button" role="menuitem">Log out</button>
+        </div>
+      </div>
+    </header>
 
-  <section id="setup">
-    <label>Email
-      <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
-    </label>
-    <button id="create" type="button">Create wallet</button>
-    <button id="open" type="button">Open wallet</button>
-  </section>
+    <section id="setup">
+      <label>Email
+        <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+      </label>
+      <button id="send-code" type="button">Send code</button>
+      <button id="open" type="button">Open wallet</button>
+      <div id="otp-box" hidden>
+        <label>Verification code
+          <input id="otp" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code">
+        </label>
+        <button id="verify-code" type="button">Verify email</button>
+        <button id="create" type="button" disabled>Create wallet</button>
+        <p id="otp-note" class="muted">We email a code so only the mailbox owner can create this wallet.</p>
+      </div>
+    </section>
 
-  <section id="wallet" hidden>
-    <p>Address<br><span id="address" class="mono"></span></p>
-    <p><a id="explorer" href="" target="_blank" rel="noopener">View on BaseScan</a></p>
-    <div class="receive">
+    <section id="wallet" hidden>
+      <p>Address<br><span id="address" class="mono"></span></p>
+      <p><a id="explorer" href="" target="_blank" rel="noopener">View on BaseScan</a></p>
       <canvas id="qr" width="180" height="180" aria-label="Receive QR code"></canvas>
-      <img id="me" width="56" height="56" alt="Your Gravatar" hidden>
-    </div>
-    <p>ETH <strong id="eth">…</strong></p>
-    <p><span id="token-label">USDT</span> <strong id="token">…</strong></p>
-    <button id="refresh" type="button">Refresh balances</button>
-    <button id="switch" type="button">Use another email</button>
+      <p>ETH <strong id="eth">…</strong></p>
+      <p><span id="token-label">USDT</span> <strong id="token">…</strong></p>
 
-    <h2>To collect</h2>
-    <p id="incoming-note" class="muted">Payments held in escrow for this email.</p>
-    <ul id="incoming"></ul>
-    <button id="collect" type="button" hidden>Collect</button>
+      <h2>To collect</h2>
+      <p id="incoming-note" class="muted">Payments held in escrow for this email.</p>
+      <ul id="incoming"></ul>
+      <button id="collect" type="button" hidden>Collect</button>
 
-    <h2>Waiting for collection</h2>
-    <p class="muted"></p>
-    <ul id="outgoing"></ul>
+      <h2>Waiting for collection</h2>
+      <p class="muted"></p>
+      <ul id="outgoing"></ul>
 
-    <h2>Send</h2>
-    <p id="gas" class="muted"></p>
-    <label>Recipient email
-      <span class="with-avatar">
-        <img id="recipient-avatar" width="40" height="40" alt="Recipient Gravatar" hidden>
-        <input id="recipient" type="email" autocomplete="off" placeholder="friend@example.com">
-      </span>
-    </label>
-    <p id="resolved" class="muted"></p>
-    <label>Amount
-      <input id="amount" inputmode="decimal" placeholder="0.00">
-    </label>
-    <button id="send" type="button">Send</button>
-  </section>
+      <h2>Send</h2>
+      <p id="gas" class="muted"></p>
+      <label>Recipient email
+        <span class="with-avatar">
+          <img id="recipient-avatar" width="40" height="40" alt="Recipient Gravatar" hidden>
+          <input id="recipient" type="email" autocomplete="off" placeholder="friend@example.com">
+        </span>
+      </label>
+      <p id="resolved" class="muted"></p>
+      <label>Amount
+        <input id="amount" inputmode="decimal" placeholder="0.00">
+      </label>
+      <button id="send" type="button">Send</button>
+    </section>
 
-  <p id="status"></p>
+    <p id="status"></p>
+  </div>
   <script src="/ethw.js"></script>
 </body>
 </html>

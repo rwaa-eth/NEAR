@@ -27,6 +27,7 @@ type Config = {
   symbol: string;
   paymaster: boolean;
   escrow: Address | null;
+  mailReady: boolean;
 };
 
 type EscrowRow = {
@@ -45,8 +46,13 @@ type StoredAccount = {
 };
 
 const emailInput = document.querySelector<HTMLInputElement>("#email")!;
+const sendCodeButton = document.querySelector<HTMLButtonElement>("#send-code")!;
+const verifyCodeButton = document.querySelector<HTMLButtonElement>("#verify-code")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create")!;
 const openButton = document.querySelector<HTMLButtonElement>("#open")!;
+const otpBox = document.querySelector<HTMLElement>("#otp-box")!;
+const otpInput = document.querySelector<HTMLInputElement>("#otp")!;
+const otpNote = document.querySelector<HTMLElement>("#otp-note")!;
 const setup = document.querySelector<HTMLElement>("#setup")!;
 const wallet = document.querySelector<HTMLElement>("#wallet")!;
 const addressEl = document.querySelector<HTMLElement>("#address")!;
@@ -55,8 +61,10 @@ const qr = document.querySelector<HTMLCanvasElement>("#qr")!;
 const ethEl = document.querySelector<HTMLElement>("#eth")!;
 const tokenLabel = document.querySelector<HTMLElement>("#token-label")!;
 const tokenEl = document.querySelector<HTMLElement>("#token")!;
-const refreshButton = document.querySelector<HTMLButtonElement>("#refresh")!;
-const switchButton = document.querySelector<HTMLButtonElement>("#switch")!;
+const accountEl = document.querySelector<HTMLElement>("#account")!;
+const accountTrigger = document.querySelector<HTMLButtonElement>("#account-trigger")!;
+const accountMenu = document.querySelector<HTMLElement>("#account-menu")!;
+const logoutButton = document.querySelector<HTMLButtonElement>("#logout")!;
 const me = document.querySelector<HTMLImageElement>("#me")!;
 const recipientInput = document.querySelector<HTMLInputElement>("#recipient")!;
 const recipientAvatar = document.querySelector<HTMLImageElement>("#recipient-avatar")!;
@@ -79,9 +87,12 @@ let config: Config;
 let current: StoredAccount | null = null;
 let decimals = 6;
 let lookupTimer = 0;
+let balanceTimer = 0;
 let userAvatarToken = 0;
 let recipientToken = 0;
 let lookedUp: RecipientLookup | null = null;
+let emailToken: string | null = null;
+let verifiedEmail: string | null = null;
 const gravatarCache = new Map<string, string>();
 
 const client = () =>
@@ -183,18 +194,37 @@ async function gravatarUrl(email: string, size: number): Promise<string> {
   return url;
 }
 
+function setAccountMenuOpen(open: boolean): void {
+  accountMenu.hidden = !open;
+  accountTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 async function showUserAvatar(email: string): Promise<void> {
   const token = ++userAvatarToken;
   const trimmed = email.trim();
   if (!trimmed) {
-    me.hidden = true;
+    accountEl.hidden = true;
+    setAccountMenuOpen(false);
     me.removeAttribute("src");
     return;
   }
-  const url = await gravatarUrl(trimmed, 112);
+  const url = await gravatarUrl(trimmed, 72);
   if (token !== userAvatarToken) return;
   me.src = url;
-  me.hidden = false;
+  accountEl.hidden = false;
+}
+
+function stopBalanceRefresh(): void {
+  window.clearInterval(balanceTimer);
+  balanceTimer = 0;
+}
+
+function startBalanceRefresh(): void {
+  stopBalanceRefresh();
+  balanceTimer = window.setInterval(() => {
+    if (!current || document.hidden) return;
+    refreshBalances({ quiet: true }).catch(() => undefined);
+  }, 10_000);
 }
 
 function amountLabel(): string | null {
@@ -241,12 +271,27 @@ async function showWallet(account: StoredAccount): Promise<void> {
   await showUserAvatar(account.email);
   await refreshBalances();
   await loadEscrow();
+  startBalanceRefresh();
 }
 
-async function refreshBalances(): Promise<void> {
+function logout(): void {
+  current = null;
+  stopBalanceRefresh();
+  window.localStorage.removeItem("ethw.email");
+  wallet.hidden = true;
+  setup.hidden = false;
+  clearEmailVerification();
+  setAccountMenuOpen(false);
+  setStatus("");
+  showUserAvatar("").catch((error: unknown) => setStatus(explain(error)));
+}
+
+async function refreshBalances(options: { quiet?: boolean } = {}): Promise<void> {
   if (!current) return;
-  ethEl.textContent = "…";
-  tokenEl.textContent = "…";
+  if (!options.quiet) {
+    ethEl.textContent = "…";
+    tokenEl.textContent = "…";
+  }
   try {
     const rpc = client();
     const wei = await rpc.getBalance({ address: current.address });
@@ -268,6 +313,7 @@ async function refreshBalances(): Promise<void> {
     });
     tokenEl.textContent = formatUnits(raw, decimals);
   } catch (error) {
+    if (options.quiet) return;
     ethEl.textContent = "unavailable";
     tokenEl.textContent = "unavailable";
     setStatus(explain(error));
@@ -287,10 +333,71 @@ async function smartAccount() {
   });
 }
 
+function clearEmailVerification(): void {
+  emailToken = null;
+  verifiedEmail = null;
+  createButton.disabled = true;
+  otpBox.hidden = true;
+  otpInput.value = "";
+}
+
+async function sendCode(): Promise<void> {
+  const email = emailInput.value.trim();
+  if (!email) {
+    setStatus("Enter an email.");
+    return;
+  }
+  if (!config.mailReady) {
+    setStatus("Email sending is not configured on the server.");
+    return;
+  }
+  clearEmailVerification();
+  setStatus("Sending a verification code.");
+  sendCodeButton.disabled = true;
+  try {
+    const result = await api<{ sent: boolean; devCode?: string }>("/ethw/api/otp/send", { email });
+    otpBox.hidden = false;
+    otpNote.textContent = result.devCode
+      ? `Dev mode code: ${result.devCode}`
+      : "We emailed a code so only the mailbox owner can create this wallet.";
+    setStatus("Enter the code from your email.");
+    otpInput.focus();
+  } finally {
+    sendCodeButton.disabled = false;
+  }
+}
+
+async function verifyCode(): Promise<void> {
+  const email = emailInput.value.trim();
+  const code = otpInput.value.trim();
+  if (!email) {
+    setStatus("Enter an email.");
+    return;
+  }
+  if (!/^\d{6}$/.test(code)) {
+    setStatus("Enter the 6-digit code.");
+    return;
+  }
+  verifyCodeButton.disabled = true;
+  try {
+    const result = await api<{ email: string; emailToken: string }>("/ethw/api/otp/verify", { email, code });
+    emailToken = result.emailToken;
+    verifiedEmail = result.email;
+    createButton.disabled = false;
+    setStatus("Email verified. Create the wallet with your passkey.");
+  } finally {
+    verifyCodeButton.disabled = false;
+  }
+}
+
 async function createWallet(): Promise<void> {
   const email = emailInput.value.trim();
   if (!email) {
     setStatus("Enter an email.");
+    return;
+  }
+  if (!emailToken || verifiedEmail !== email.trim().toLowerCase()) {
+    setStatus("Verify your email before creating a wallet.");
     return;
   }
   setStatus("Confirm the passkey prompt.");
@@ -312,7 +419,9 @@ async function createWallet(): Promise<void> {
     address: account.address,
     credentialId: credential.id,
     publicKey: credential.publicKey,
+    emailToken,
   });
+  clearEmailVerification();
   setStatus("Wallet created.");
   await showWallet({
     email: saved.email,
@@ -592,29 +701,41 @@ async function sendToken(): Promise<void> {
 }
 
 createButton.disabled = true;
+sendCodeButton.disabled = true;
 openButton.disabled = true;
 
+sendCodeButton.addEventListener("click", () => {
+  sendCode().catch((error: unknown) => setStatus(explain(error)));
+});
+verifyCodeButton.addEventListener("click", () => {
+  verifyCode().catch((error: unknown) => setStatus(explain(error)));
+});
 createButton.addEventListener("click", () => {
   createWallet().catch((error: unknown) => setStatus(explain(error)));
 });
 openButton.addEventListener("click", () => {
   openWallet().catch((error: unknown) => setStatus(explain(error)));
 });
-refreshButton.addEventListener("click", () => {
-  refreshBalances()
-    .then(() => loadEscrow())
-    .catch((error: unknown) => setStatus(explain(error)));
+emailInput.addEventListener("input", () => {
+  if (verifiedEmail && verifiedEmail !== emailInput.value.trim().toLowerCase()) clearEmailVerification();
 });
 collectButton.addEventListener("click", () => {
   collectEscrow().catch((error: unknown) => setStatus(explain(error)));
 });
-switchButton.addEventListener("click", () => {
-  current = null;
-  window.localStorage.removeItem("ethw.email");
-  wallet.hidden = true;
-  setup.hidden = false;
-  setStatus("");
-  showUserAvatar("").catch((error: unknown) => setStatus(explain(error)));
+accountTrigger.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setAccountMenuOpen(accountMenu.hidden);
+});
+logoutButton.addEventListener("click", () => {
+  logout();
+});
+document.addEventListener("click", () => {
+  if (!accountMenu.hidden) setAccountMenuOpen(false);
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && current) {
+    refreshBalances({ quiet: true }).catch(() => undefined);
+  }
 });
 recipientInput.addEventListener("input", () => {
   window.clearTimeout(lookupTimer);
@@ -629,8 +750,11 @@ sendButton.addEventListener("click", () => {
 void api<Config>("/ethw/api/config")
   .then(async (loaded) => {
     config = loaded;
-    createButton.disabled = false;
+    sendCodeButton.disabled = !config.mailReady;
     openButton.disabled = false;
+    if (!config.mailReady) {
+      setStatus("Set RESEND_API_KEY or SMTP_URL on the server to verify new wallets.");
+    }
     const saved = window.localStorage.getItem("ethw.email");
     if (!saved) return;
     emailInput.value = saved;

@@ -11,7 +11,7 @@
     "deploy:usdt": "tsx script/deploy-usdt.ts",
     "fund": "tsx script/fund-usdt.ts",
     "deploy:escrow": "tsx script/deploy-escrow.ts",
-    "test": "tsx --test test/accountId.test.ts test/geo.test.ts test/api.test.ts test/ethw.test.ts test/escrow.test.ts"
+    "test": "tsx --test test/accountId.test.ts test/geo.test.ts test/api.test.ts test/ethw.test.ts test/escrow.test.ts test/otp.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
@@ -22,6 +22,7 @@
     "esbuild": "^0.25.10",
     "fastify": "^5.2.1",
     "near-api-js": "^5.1.0",
+    "nodemailer": "^10.3.1",
     "qrcode": "^1.5.4",
     "viem": "^2.38.3",
     "zod": "^3.24.2"
@@ -30,6 +31,7 @@
     "@openzeppelin/contracts": "^5.6.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.13.4",
+    "@types/nodemailer": "^8.0.2",
     "@types/qrcode": "^1.5.5",
     "solc": "^0.8.38",
     "tsx": "^4.19.3",
