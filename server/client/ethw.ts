@@ -59,6 +59,11 @@ const otpInput = document.querySelector<HTMLInputElement>("#otp")!;
 const otpNote = document.querySelector<HTMLElement>("#otp-note")!;
 const setup = document.querySelector<HTMLElement>("#setup")!;
 const wallet = document.querySelector<HTMLElement>("#wallet")!;
+const sendView = document.querySelector<HTMLElement>("#send-view")!;
+const sendDock = document.querySelector<HTMLElement>("#send-dock")!;
+const brandHome = document.querySelector<HTMLButtonElement>("#brand-home")!;
+const openSendButton = document.querySelector<HTMLButtonElement>("#open-send")!;
+const sendBackButton = document.querySelector<HTMLButtonElement>("#send-back")!;
 const addressEl = document.querySelector<HTMLElement>("#address")!;
 const explorer = document.querySelector<HTMLAnchorElement>("#explorer")!;
 const qr = document.querySelector<HTMLCanvasElement>("#qr")!;
@@ -73,6 +78,7 @@ const logoutButton = document.querySelector<HTMLButtonElement>("#logout")!;
 const me = document.querySelector<HTMLImageElement>("#me")!;
 const recipientInput = document.querySelector<HTMLInputElement>("#recipient")!;
 const recipientAvatar = document.querySelector<HTMLImageElement>("#recipient-avatar")!;
+const kindChip = document.querySelector<HTMLElement>("#kind-chip")!;
 const resolvedEl = document.querySelector<HTMLElement>("#resolved")!;
 const amountInput = document.querySelector<HTMLInputElement>("#amount")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
@@ -83,9 +89,17 @@ const collectButton = document.querySelector<HTMLButtonElement>("#collect")!;
 const gasEl = document.querySelector<HTMLElement>("#gas")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 
+type RecipientKind = "empty" | "email" | "phone" | "evm" | "near" | "unknown";
+
 type RecipientLookup = {
   email: string;
   account: StoredAccount | null;
+};
+
+type DetectedRecipient = {
+  kind: RecipientKind;
+  label: string;
+  detail: string;
 };
 
 let config: Config;
@@ -187,6 +201,99 @@ function isEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+function isEvmAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+function isNearAddress(value: string): boolean {
+  const raw = value.trim().toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(raw)) return true;
+  if (!/^[a-z0-9._-]+$/.test(raw)) return false;
+  if (raw.length < 2 || raw.length > 64) return false;
+  return (
+    raw.endsWith(".near") ||
+    raw.endsWith(".testnet") ||
+    raw.endsWith(".tg") ||
+    raw.includes(".")
+  );
+}
+
+function isPhoneNumber(value: string): boolean {
+  const raw = value.trim();
+  if (raw.includes("@") || raw.startsWith("0x")) return false;
+  const digits = raw.replace(/[^\d]/g, "");
+  if (digits.length < 8 || digits.length > 15) return false;
+  return /^\+?[\d\s().-]{8,22}$/.test(raw);
+}
+
+function detectRecipient(value: string): DetectedRecipient {
+  const raw = value.trim();
+  if (!raw) {
+    return { kind: "empty", label: "Recipient", detail: "" };
+  }
+  if (isEmail(raw)) {
+    return { kind: "email", label: "Email", detail: "Escrow or direct send on Base Sepolia" };
+  }
+  if (isEvmAddress(raw)) {
+    return {
+      kind: "evm",
+      label: "EVM · Base Sepolia",
+      detail: "Detected as an Ethereum-compatible address on this wallet’s network",
+    };
+  }
+  if (isPhoneNumber(raw)) {
+    return { kind: "phone", label: "SMS", detail: "Phone delivery is coming soon" };
+  }
+  if (isNearAddress(raw)) {
+    return { kind: "near", label: "NEAR", detail: "NEAR transfers are coming soon" };
+  }
+  return {
+    kind: "unknown",
+    label: "Unrecognized",
+    detail: "Use an email, +phone, 0x address, or name.near",
+  };
+}
+
+function pathIsSend(): boolean {
+  return window.location.pathname === "/send" || window.location.pathname.endsWith("/send");
+}
+
+function renderRoute(): void {
+  const onSend = pathIsSend();
+  if (onSend && !current) {
+    window.history.replaceState({}, "", "/");
+    setup.hidden = false;
+    wallet.hidden = true;
+    sendView.hidden = true;
+    sendDock.hidden = true;
+    return;
+  }
+  setup.hidden = onSend || Boolean(current);
+  wallet.hidden = onSend || !current;
+  sendView.hidden = !onSend;
+  sendDock.hidden = !current || onSend;
+  if (onSend && current) syncSendButton();
+}
+
+function goHome(): void {
+  if (window.location.pathname !== "/") {
+    window.history.pushState({}, "", "/");
+  }
+  renderRoute();
+}
+
+function goSend(): void {
+  if (!current) {
+    setStatus("Open your wallet before sending.");
+    return;
+  }
+  if (!pathIsSend()) {
+    window.history.pushState({}, "", "/send");
+  }
+  renderRoute();
+  recipientInput.focus();
+}
+
 async function gravatarUrl(email: string, size: number): Promise<string> {
   const normalized = email.trim().toLowerCase();
   const key = `${normalized}|${size}`;
@@ -276,14 +383,11 @@ async function showWallet(account: StoredAccount): Promise<void> {
   current = account;
   window.localStorage.setItem("ethw.email", account.email);
   emailInput.value = account.email;
-  setup.hidden = true;
-  wallet.hidden = false;
   addressEl.textContent = account.address;
   explorer.href = `https://sepolia.basescan.org/address/${account.address}`;
   tokenLabel.textContent = config.symbol;
-  gasEl.textContent = config.paymaster
-    ? ""
-    : "";
+  gasEl.textContent = config.paymaster ? "Gas is sponsored on Base Sepolia." : "";
+  renderRoute();
   syncSendButton();
   await QRCode.toCanvas(qr, account.address, { width: 180, margin: 1 });
   await showUserAvatar(account.email);
@@ -296,11 +400,13 @@ function logout(): void {
   current = null;
   stopBalanceRefresh();
   window.localStorage.removeItem("ethw.email");
-  wallet.hidden = true;
-  setup.hidden = false;
   clearEmailVerification();
   setAccountMenuOpen(false);
   setStatus("");
+  if (pathIsSend()) {
+    window.history.replaceState({}, "", "/");
+  }
+  renderRoute();
   showUserAvatar("").catch((error: unknown) => setStatus(explain(error)));
 }
 
@@ -482,9 +588,24 @@ async function openWallet(): Promise<void> {
   await showWallet(account);
 }
 
-function setSendAction(registered: boolean): void {
+function setSendAction(kind: RecipientKind, registered = true): void {
+  if (kind === "phone") {
+    sendButton.textContent = "SMS coming soon";
+    sendButton.disabled = true;
+    return;
+  }
+  if (kind === "near") {
+    sendButton.textContent = "NEAR coming soon";
+    sendButton.disabled = true;
+    return;
+  }
+  if (kind === "empty" || kind === "unknown") {
+    sendButton.textContent = "Send";
+    sendButton.disabled = true;
+    return;
+  }
   sendButton.textContent = "Send";
-  sendButton.disabled = registered ? !config.erc20 : false;
+  sendButton.disabled = kind === "email" && !registered ? false : !config.erc20;
 }
 
 function unlockLabel(row: EscrowRow): string {
@@ -633,44 +754,61 @@ async function collectEscrow(): Promise<void> {
 }
 
 function syncSendButton(): void {
-  const raw = recipientInput.value.trim().toLowerCase();
-  const unregistered = isEmail(raw) && lookedUp?.email === raw && !lookedUp.account;
-  setSendAction(!unregistered);
+  const detected = detectRecipient(recipientInput.value);
+  if (detected.kind === "email") {
+    const raw = recipientInput.value.trim().toLowerCase();
+    const unregistered = lookedUp?.email === raw && !lookedUp.account;
+    setSendAction("email", !unregistered);
+    return;
+  }
+  setSendAction(detected.kind);
+}
+
+function setKindChip(detected: DetectedRecipient): void {
+  kindChip.dataset.kind = detected.kind;
+  kindChip.textContent = detected.label;
 }
 
 async function resolveRecipient(): Promise<void> {
   const token = ++recipientToken;
   const raw = recipientInput.value.trim();
-  if (!raw) {
+  const detected = detectRecipient(raw);
+  setKindChip(detected);
+
+  if (detected.kind === "empty") {
     lookedUp = null;
     resolvedEl.textContent = "";
     recipientAvatar.hidden = true;
     recipientAvatar.removeAttribute("src");
-    setSendAction(true);
+    setSendAction("empty");
     return;
   }
-  const url = await gravatarUrl(raw, 80);
-  if (token !== recipientToken) return;
-  recipientAvatar.hidden = false;
-  recipientAvatar.src = url;
-  if (!isEmail(raw)) {
-    lookedUp = null;
-    resolvedEl.textContent = "";
-    setSendAction(true);
+
+  if (detected.kind === "email") {
+    const url = await gravatarUrl(raw, 80);
+    if (token !== recipientToken) return;
+    recipientAvatar.hidden = false;
+    recipientAvatar.src = url;
+    const account = await loadAccount(raw);
+    if (token !== recipientToken) return;
+    lookedUp = { email: raw.toLowerCase(), account };
+    if (account) {
+      resolvedEl.textContent = `Registered · ${account.address}`;
+      setSendAction("email", true);
+    } else {
+      resolvedEl.textContent = config.escrow
+        ? "Not registered. A send is held in escrow until they register and collect it."
+        : "Not registered — they’ll need a wallet before collecting.";
+      setSendAction("email", false);
+    }
     return;
   }
-  const account = await loadAccount(raw);
-  if (token !== recipientToken) return;
-  lookedUp = { email: raw.toLowerCase(), account };
-  if (account) {
-    resolvedEl.textContent = `Registered · ${account.address}`;
-    setSendAction(true);
-  } else {
-    resolvedEl.textContent = config.escrow
-      ? "Not registered. A send is held in escrow until they register and collect it."
-      : "Not registered";
-    setSendAction(false);
-  }
+
+  lookedUp = null;
+  recipientAvatar.hidden = true;
+  recipientAvatar.removeAttribute("src");
+  resolvedEl.textContent = detected.detail;
+  setSendAction(detected.kind);
 }
 
 async function depositEscrow(email: string): Promise<void> {
@@ -745,26 +883,13 @@ async function depositEscrow(email: string): Promise<void> {
   }
 }
 
-async function sendToken(): Promise<void> {
+async function sendToEvmAddress(to: `0x${string}`): Promise<void> {
   if (!current) return;
-  const raw = recipientInput.value.trim();
-  if (!isEmail(raw)) {
-    setStatus("Enter the recipient email.");
-    return;
-  }
-  await resolveRecipient();
-  const recipient = lookedUp?.email === raw.toLowerCase() ? lookedUp.account : null;
-  if (!lookedUp || lookedUp.email !== raw.toLowerCase()) return;
-  if (!recipient) {
-    if (config.escrow && config.erc20) await depositEscrow(raw);
-    else emailSendNotice(raw, false);
-    return;
-  }
   if (!config.erc20) {
     setStatus("Set ERC20_ADDRESS on the server before sending.");
     return;
   }
-  if (recipient.address.toLowerCase() === current.address.toLowerCase()) {
+  if (to.toLowerCase() === current.address.toLowerCase()) {
     setStatus("Choose a different recipient.");
     return;
   }
@@ -779,7 +904,7 @@ async function sendToken(): Promise<void> {
     setStatus("Enter an amount greater than zero.");
     return;
   }
-  setStatus("Confirm the passkey to send.");
+  setStatus("Confirm the passkey to send on Base Sepolia.");
   sendButton.disabled = true;
   try {
     const account = await smartAccount();
@@ -797,7 +922,7 @@ async function sendToken(): Promise<void> {
           data: encodeFunctionData({
             abi: erc20Abi,
             functionName: "transfer",
-            args: [recipient.address, amount],
+            args: [to, amount],
           }),
         },
       ],
@@ -805,7 +930,7 @@ async function sendToken(): Promise<void> {
     setStatus("Waiting for the transfer.");
     const receipt = await bundler.waitForUserOperationReceipt({ hash });
     const tx = receipt.receipt.transactionHash;
-    setStatus(`Sent. ${tx}`);
+    setStatus(`Sent on Base Sepolia. ${tx}`);
     amountInput.value = "";
     await refreshBalances();
   } catch (error) {
@@ -815,8 +940,47 @@ async function sendToken(): Promise<void> {
   }
 }
 
+async function sendToken(): Promise<void> {
+  if (!current) return;
+  const raw = recipientInput.value.trim();
+  const detected = detectRecipient(raw);
+  await resolveRecipient();
+
+  if (detected.kind === "phone") {
+    setStatus("SMS delivery is not available yet. Use email or a 0x address.");
+    return;
+  }
+  if (detected.kind === "near") {
+    setStatus("NEAR transfers are not available yet. Use email or a Base Sepolia 0x address.");
+    return;
+  }
+  if (detected.kind === "unknown" || detected.kind === "empty") {
+    setStatus("Enter an email, phone, 0x address, or NEAR account.");
+    return;
+  }
+  if (detected.kind === "evm") {
+    await sendToEvmAddress(raw as `0x${string}`);
+    return;
+  }
+
+  const recipient = lookedUp?.email === raw.toLowerCase() ? lookedUp.account : null;
+  if (!lookedUp || lookedUp.email !== raw.toLowerCase()) return;
+  if (!recipient) {
+    if (config.escrow && config.erc20) await depositEscrow(raw);
+    else emailSendNotice(raw, false);
+    return;
+  }
+  if (recipient.address.toLowerCase() === current.address.toLowerCase()) {
+    setStatus("Choose a different recipient.");
+    return;
+  }
+  await sendToEvmAddress(recipient.address as `0x${string}`);
+}
+
 sendCodeButton.disabled = true;
 openButton.disabled = true;
+renderRoute();
+setKindChip(detectRecipient(""));
 
 sendCodeButton.addEventListener("click", () => {
   sendCode().catch((error: unknown) => setStatus(explain(error)));
@@ -846,6 +1010,18 @@ accountTrigger.addEventListener("click", (event) => {
 logoutButton.addEventListener("click", () => {
   logout();
 });
+brandHome.addEventListener("click", () => {
+  goHome();
+});
+openSendButton.addEventListener("click", () => {
+  goSend();
+});
+sendBackButton.addEventListener("click", () => {
+  goHome();
+});
+window.addEventListener("popstate", () => {
+  renderRoute();
+});
 document.addEventListener("click", () => {
   if (!accountMenu.hidden) setAccountMenuOpen(false);
 });
@@ -855,6 +1031,8 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 recipientInput.addEventListener("input", () => {
+  const detected = detectRecipient(recipientInput.value);
+  setKindChip(detected);
   window.clearTimeout(lookupTimer);
   lookupTimer = window.setTimeout(() => {
     resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
@@ -873,9 +1051,13 @@ void api<Config>("/ethw/api/config")
       setStatus("Set RESEND_API_KEY or SMTP_URL on the server to verify new wallets.");
     }
     const saved = window.localStorage.getItem("ethw.email");
-    if (!saved) return;
+    if (!saved) {
+      renderRoute();
+      return;
+    }
     emailInput.value = saved;
     const account = await loadAccount(saved);
     if (account) await showWallet(account);
+    else renderRoute();
   })
   .catch((error: unknown) => setStatus(explain(error)));

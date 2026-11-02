@@ -26048,6 +26048,11 @@ ${prettyStateOverride(stateOverride)}`;
       var otpNote = document.querySelector("#otp-note");
       var setup = document.querySelector("#setup");
       var wallet = document.querySelector("#wallet");
+      var sendView = document.querySelector("#send-view");
+      var sendDock = document.querySelector("#send-dock");
+      var brandHome = document.querySelector("#brand-home");
+      var openSendButton = document.querySelector("#open-send");
+      var sendBackButton = document.querySelector("#send-back");
       var addressEl = document.querySelector("#address");
       var explorer = document.querySelector("#explorer");
       var qr = document.querySelector("#qr");
@@ -26062,6 +26067,7 @@ ${prettyStateOverride(stateOverride)}`;
       var me = document.querySelector("#me");
       var recipientInput = document.querySelector("#recipient");
       var recipientAvatar = document.querySelector("#recipient-avatar");
+      var kindChip = document.querySelector("#kind-chip");
       var resolvedEl = document.querySelector("#resolved");
       var amountInput = document.querySelector("#amount");
       var sendButton = document.querySelector("#send");
@@ -26156,6 +26162,86 @@ ${prettyStateOverride(stateOverride)}`;
       function isEmail(value) {
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
       }
+      function isEvmAddress(value) {
+        return /^0x[a-fA-F0-9]{40}$/.test(value);
+      }
+      function isNearAddress(value) {
+        const raw = value.trim().toLowerCase();
+        if (/^[0-9a-f]{64}$/.test(raw)) return true;
+        if (!/^[a-z0-9._-]+$/.test(raw)) return false;
+        if (raw.length < 2 || raw.length > 64) return false;
+        return raw.endsWith(".near") || raw.endsWith(".testnet") || raw.endsWith(".tg") || raw.includes(".");
+      }
+      function isPhoneNumber(value) {
+        const raw = value.trim();
+        if (raw.includes("@") || raw.startsWith("0x")) return false;
+        const digits = raw.replace(/[^\d]/g, "");
+        if (digits.length < 8 || digits.length > 15) return false;
+        return /^\+?[\d\s().-]{8,22}$/.test(raw);
+      }
+      function detectRecipient(value) {
+        const raw = value.trim();
+        if (!raw) {
+          return { kind: "empty", label: "Recipient", detail: "" };
+        }
+        if (isEmail(raw)) {
+          return { kind: "email", label: "Email", detail: "Escrow or direct send on Base Sepolia" };
+        }
+        if (isEvmAddress(raw)) {
+          return {
+            kind: "evm",
+            label: "EVM \xB7 Base Sepolia",
+            detail: "Detected as an Ethereum-compatible address on this wallet\u2019s network"
+          };
+        }
+        if (isPhoneNumber(raw)) {
+          return { kind: "phone", label: "SMS", detail: "Phone delivery is coming soon" };
+        }
+        if (isNearAddress(raw)) {
+          return { kind: "near", label: "NEAR", detail: "NEAR transfers are coming soon" };
+        }
+        return {
+          kind: "unknown",
+          label: "Unrecognized",
+          detail: "Use an email, +phone, 0x address, or name.near"
+        };
+      }
+      function pathIsSend() {
+        return window.location.pathname === "/send" || window.location.pathname.endsWith("/send");
+      }
+      function renderRoute() {
+        const onSend = pathIsSend();
+        if (onSend && !current) {
+          window.history.replaceState({}, "", "/");
+          setup.hidden = false;
+          wallet.hidden = true;
+          sendView.hidden = true;
+          sendDock.hidden = true;
+          return;
+        }
+        setup.hidden = onSend || Boolean(current);
+        wallet.hidden = onSend || !current;
+        sendView.hidden = !onSend;
+        sendDock.hidden = !current || onSend;
+        if (onSend && current) syncSendButton();
+      }
+      function goHome() {
+        if (window.location.pathname !== "/") {
+          window.history.pushState({}, "", "/");
+        }
+        renderRoute();
+      }
+      function goSend() {
+        if (!current) {
+          setStatus("Open your wallet before sending.");
+          return;
+        }
+        if (!pathIsSend()) {
+          window.history.pushState({}, "", "/send");
+        }
+        renderRoute();
+        recipientInput.focus();
+      }
       async function gravatarUrl(email, size5) {
         const normalized = email.trim().toLowerCase();
         const key = `${normalized}|${size5}`;
@@ -26227,12 +26313,11 @@ ${prettyStateOverride(stateOverride)}`;
         current = account;
         window.localStorage.setItem("ethw.email", account.email);
         emailInput.value = account.email;
-        setup.hidden = true;
-        wallet.hidden = false;
         addressEl.textContent = account.address;
         explorer.href = `https://sepolia.basescan.org/address/${account.address}`;
         tokenLabel.textContent = config.symbol;
-        gasEl.textContent = config.paymaster ? "" : "";
+        gasEl.textContent = config.paymaster ? "Gas is sponsored on Base Sepolia." : "";
+        renderRoute();
         syncSendButton();
         await import_qrcode.default.toCanvas(qr, account.address, { width: 180, margin: 1 });
         await showUserAvatar(account.email);
@@ -26244,11 +26329,13 @@ ${prettyStateOverride(stateOverride)}`;
         current = null;
         stopBalanceRefresh();
         window.localStorage.removeItem("ethw.email");
-        wallet.hidden = true;
-        setup.hidden = false;
         clearEmailVerification();
         setAccountMenuOpen(false);
         setStatus("");
+        if (pathIsSend()) {
+          window.history.replaceState({}, "", "/");
+        }
+        renderRoute();
         showUserAvatar("").catch((error) => setStatus(explain(error)));
       }
       async function refreshBalances(options = {}) {
@@ -26420,9 +26507,24 @@ ${prettyStateOverride(stateOverride)}`;
         setStatus("");
         await showWallet(account);
       }
-      function setSendAction(registered) {
+      function setSendAction(kind, registered = true) {
+        if (kind === "phone") {
+          sendButton.textContent = "SMS coming soon";
+          sendButton.disabled = true;
+          return;
+        }
+        if (kind === "near") {
+          sendButton.textContent = "NEAR coming soon";
+          sendButton.disabled = true;
+          return;
+        }
+        if (kind === "empty" || kind === "unknown") {
+          sendButton.textContent = "Send";
+          sendButton.disabled = true;
+          return;
+        }
         sendButton.textContent = "Send";
-        sendButton.disabled = registered ? !config.erc20 : false;
+        sendButton.disabled = kind === "email" && !registered ? false : !config.erc20;
       }
       function unlockLabel(row) {
         if (!row.unlockAt) return "pull-back after one week";
@@ -26554,41 +26656,54 @@ ${prettyStateOverride(stateOverride)}`;
         }
       }
       function syncSendButton() {
-        const raw = recipientInput.value.trim().toLowerCase();
-        const unregistered = isEmail(raw) && lookedUp?.email === raw && !lookedUp.account;
-        setSendAction(!unregistered);
+        const detected = detectRecipient(recipientInput.value);
+        if (detected.kind === "email") {
+          const raw = recipientInput.value.trim().toLowerCase();
+          const unregistered = lookedUp?.email === raw && !lookedUp.account;
+          setSendAction("email", !unregistered);
+          return;
+        }
+        setSendAction(detected.kind);
+      }
+      function setKindChip(detected) {
+        kindChip.dataset.kind = detected.kind;
+        kindChip.textContent = detected.label;
       }
       async function resolveRecipient() {
         const token = ++recipientToken;
         const raw = recipientInput.value.trim();
-        if (!raw) {
+        const detected = detectRecipient(raw);
+        setKindChip(detected);
+        if (detected.kind === "empty") {
           lookedUp = null;
           resolvedEl.textContent = "";
           recipientAvatar.hidden = true;
           recipientAvatar.removeAttribute("src");
-          setSendAction(true);
+          setSendAction("empty");
           return;
         }
-        const url = await gravatarUrl(raw, 80);
-        if (token !== recipientToken) return;
-        recipientAvatar.hidden = false;
-        recipientAvatar.src = url;
-        if (!isEmail(raw)) {
-          lookedUp = null;
-          resolvedEl.textContent = "";
-          setSendAction(true);
+        if (detected.kind === "email") {
+          const url = await gravatarUrl(raw, 80);
+          if (token !== recipientToken) return;
+          recipientAvatar.hidden = false;
+          recipientAvatar.src = url;
+          const account = await loadAccount(raw);
+          if (token !== recipientToken) return;
+          lookedUp = { email: raw.toLowerCase(), account };
+          if (account) {
+            resolvedEl.textContent = `Registered \xB7 ${account.address}`;
+            setSendAction("email", true);
+          } else {
+            resolvedEl.textContent = config.escrow ? "Not registered. A send is held in escrow until they register and collect it." : "Not registered \u2014 they\u2019ll need a wallet before collecting.";
+            setSendAction("email", false);
+          }
           return;
         }
-        const account = await loadAccount(raw);
-        if (token !== recipientToken) return;
-        lookedUp = { email: raw.toLowerCase(), account };
-        if (account) {
-          resolvedEl.textContent = `Registered \xB7 ${account.address}`;
-          setSendAction(true);
-        } else {
-          resolvedEl.textContent = config.escrow ? "Not registered. A send is held in escrow until they register and collect it." : "Not registered";
-          setSendAction(false);
-        }
+        lookedUp = null;
+        recipientAvatar.hidden = true;
+        recipientAvatar.removeAttribute("src");
+        resolvedEl.textContent = detected.detail;
+        setSendAction(detected.kind);
       }
       async function depositEscrow(email) {
         if (!current || !config.erc20 || !config.escrow) return;
@@ -26661,26 +26776,13 @@ ${prettyStateOverride(stateOverride)}`;
           syncSendButton();
         }
       }
-      async function sendToken() {
+      async function sendToEvmAddress(to) {
         if (!current) return;
-        const raw = recipientInput.value.trim();
-        if (!isEmail(raw)) {
-          setStatus("Enter the recipient email.");
-          return;
-        }
-        await resolveRecipient();
-        const recipient = lookedUp?.email === raw.toLowerCase() ? lookedUp.account : null;
-        if (!lookedUp || lookedUp.email !== raw.toLowerCase()) return;
-        if (!recipient) {
-          if (config.escrow && config.erc20) await depositEscrow(raw);
-          else emailSendNotice(raw, false);
-          return;
-        }
         if (!config.erc20) {
           setStatus("Set ERC20_ADDRESS on the server before sending.");
           return;
         }
-        if (recipient.address.toLowerCase() === current.address.toLowerCase()) {
+        if (to.toLowerCase() === current.address.toLowerCase()) {
           setStatus("Choose a different recipient.");
           return;
         }
@@ -26695,7 +26797,7 @@ ${prettyStateOverride(stateOverride)}`;
           setStatus("Enter an amount greater than zero.");
           return;
         }
-        setStatus("Confirm the passkey to send.");
+        setStatus("Confirm the passkey to send on Base Sepolia.");
         sendButton.disabled = true;
         try {
           const account = await smartAccount();
@@ -26713,7 +26815,7 @@ ${prettyStateOverride(stateOverride)}`;
                 data: encodeFunctionData({
                   abi: erc20Abi,
                   functionName: "transfer",
-                  args: [recipient.address, amount]
+                  args: [to, amount]
                 })
               }
             ]
@@ -26721,7 +26823,7 @@ ${prettyStateOverride(stateOverride)}`;
           setStatus("Waiting for the transfer.");
           const receipt = await bundler.waitForUserOperationReceipt({ hash: hash3 });
           const tx = receipt.receipt.transactionHash;
-          setStatus(`Sent. ${tx}`);
+          setStatus(`Sent on Base Sepolia. ${tx}`);
           amountInput.value = "";
           await refreshBalances();
         } catch (error) {
@@ -26730,8 +26832,44 @@ ${prettyStateOverride(stateOverride)}`;
           syncSendButton();
         }
       }
+      async function sendToken() {
+        if (!current) return;
+        const raw = recipientInput.value.trim();
+        const detected = detectRecipient(raw);
+        await resolveRecipient();
+        if (detected.kind === "phone") {
+          setStatus("SMS delivery is not available yet. Use email or a 0x address.");
+          return;
+        }
+        if (detected.kind === "near") {
+          setStatus("NEAR transfers are not available yet. Use email or a Base Sepolia 0x address.");
+          return;
+        }
+        if (detected.kind === "unknown" || detected.kind === "empty") {
+          setStatus("Enter an email, phone, 0x address, or NEAR account.");
+          return;
+        }
+        if (detected.kind === "evm") {
+          await sendToEvmAddress(raw);
+          return;
+        }
+        const recipient = lookedUp?.email === raw.toLowerCase() ? lookedUp.account : null;
+        if (!lookedUp || lookedUp.email !== raw.toLowerCase()) return;
+        if (!recipient) {
+          if (config.escrow && config.erc20) await depositEscrow(raw);
+          else emailSendNotice(raw, false);
+          return;
+        }
+        if (recipient.address.toLowerCase() === current.address.toLowerCase()) {
+          setStatus("Choose a different recipient.");
+          return;
+        }
+        await sendToEvmAddress(recipient.address);
+      }
       sendCodeButton.disabled = true;
       openButton.disabled = true;
+      renderRoute();
+      setKindChip(detectRecipient(""));
       sendCodeButton.addEventListener("click", () => {
         sendCode().catch((error) => setStatus(explain(error)));
       });
@@ -26760,6 +26898,18 @@ ${prettyStateOverride(stateOverride)}`;
       logoutButton.addEventListener("click", () => {
         logout();
       });
+      brandHome.addEventListener("click", () => {
+        goHome();
+      });
+      openSendButton.addEventListener("click", () => {
+        goSend();
+      });
+      sendBackButton.addEventListener("click", () => {
+        goHome();
+      });
+      window.addEventListener("popstate", () => {
+        renderRoute();
+      });
       document.addEventListener("click", () => {
         if (!accountMenu.hidden) setAccountMenuOpen(false);
       });
@@ -26769,6 +26919,8 @@ ${prettyStateOverride(stateOverride)}`;
         }
       });
       recipientInput.addEventListener("input", () => {
+        const detected = detectRecipient(recipientInput.value);
+        setKindChip(detected);
         window.clearTimeout(lookupTimer);
         lookupTimer = window.setTimeout(() => {
           resolveRecipient().catch((error) => setStatus(explain(error)));
@@ -26785,10 +26937,14 @@ ${prettyStateOverride(stateOverride)}`;
           setStatus("Set RESEND_API_KEY or SMTP_URL on the server to verify new wallets.");
         }
         const saved = window.localStorage.getItem("ethw.email");
-        if (!saved) return;
+        if (!saved) {
+          renderRoute();
+          return;
+        }
         emailInput.value = saved;
         const account = await loadAccount(saved);
         if (account) await showWallet(account);
+        else renderRoute();
       }).catch((error) => setStatus(explain(error)));
     }
   });

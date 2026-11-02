@@ -100,10 +100,13 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
     request.credentialId = verified.credentialId;
   });
 
-  app.get("/", async (_request, reply) => {
+  const walletPage = () => {
     const html = fs.readFileSync(path.join(__dirname, "..", "public", "ethw.html"), "utf8");
-    return reply.type("text/html").send(html);
-  });
+    return html;
+  };
+
+  app.get("/", async (_request, reply) => reply.type("text/html").send(walletPage()));
+  app.get("/send", async (_request, reply) => reply.type("text/html").send(walletPage()));
 
   app.get("/login", async (_request, reply) => {
     const html = fs
@@ -289,6 +292,7 @@ function isPublic(request: FastifyRequest): boolean {
   const url = request.url.split("?")[0];
   return (
     url === "/" ||
+    url === "/send" ||
     url === "/login" ||
     url === "/login.js" ||
     url === "/favicon.ico" ||

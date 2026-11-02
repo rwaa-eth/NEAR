@@ -58,6 +58,12 @@ describe("Base Sepolia wallet", () => {
     assert.equal(config.json().escrow, null);
     assert.match(page.body, /To collect/);
     assert.match(page.body, /Waiting for collection/);
+    assert.match(page.body, /id="open-send"/);
+    assert.match(page.body, /id="send-view"/);
+    assert.match(page.body, /id="kind-chip"/);
+    const sendPage = await app.inject({ method: "GET", url: "/send" });
+    assert.equal(sendPage.statusCode, 200);
+    assert.match(sendPage.body, /Pay anyone with an email/);
     await app.close();
   });
 
