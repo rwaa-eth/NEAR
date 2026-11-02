@@ -26072,6 +26072,7 @@ ${prettyStateOverride(stateOverride)}`;
       var resolvedEl = document.querySelector("#resolved");
       var amountInput = document.querySelector("#amount");
       var sendButton = document.querySelector("#send");
+      var collectSection = document.querySelector("#collect-section");
       var incomingList = document.querySelector("#incoming");
       var outgoingList = document.querySelector("#outgoing");
       var historyList = document.querySelector("#history");
@@ -26613,9 +26614,15 @@ ${prettyStateOverride(stateOverride)}`;
         const result = await api(
           `/ethw/api/escrow?email=${encodeURIComponent(current.email)}`
         );
-        renderEscrow(incomingList, result.incoming, "Nothing to collect.", (row) => {
-          return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
-        });
+        const hasIncoming = result.incoming.length > 0;
+        collectSection.hidden = !hasIncoming;
+        if (hasIncoming) {
+          renderEscrow(incomingList, result.incoming, "", (row) => {
+            return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+          });
+        } else {
+          incomingList.replaceChildren();
+        }
         renderEscrow(
           outgoingList,
           result.outgoing,
@@ -26626,16 +26633,16 @@ ${prettyStateOverride(stateOverride)}`;
         renderEscrow(historyList, result.history, "No received payments yet.", (row) => {
           return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
         });
-        if (!config.escrow && result.incoming.length > 0) {
+        if (!config.escrow && hasIncoming) {
           incomingNote.hidden = false;
           incomingNote.textContent = "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected.";
         } else {
           incomingNote.hidden = true;
           incomingNote.textContent = "";
         }
-        syncCollectTip(result.incoming.length > 0);
-        collectButton.hidden = result.incoming.length === 0;
-        if (result.incoming.length > 0) {
+        syncCollectTip(hasIncoming);
+        collectButton.hidden = !hasIncoming;
+        if (hasIncoming) {
           const total = result.incoming.reduce((sum, row) => sum + BigInt(row.amount), 0n);
           setStatus(`You have ${formatUnits(total, decimals)} ${config.symbol} to collect.`);
         }

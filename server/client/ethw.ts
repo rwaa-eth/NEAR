@@ -84,6 +84,7 @@ const kindChip = document.querySelector<HTMLElement>("#kind-chip")!;
 const resolvedEl = document.querySelector<HTMLElement>("#resolved")!;
 const amountInput = document.querySelector<HTMLInputElement>("#amount")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
+const collectSection = document.querySelector<HTMLElement>("#collect-section")!;
 const incomingList = document.querySelector<HTMLElement>("#incoming")!;
 const outgoingList = document.querySelector<HTMLElement>("#outgoing")!;
 const historyList = document.querySelector<HTMLElement>("#history")!;
@@ -710,9 +711,15 @@ async function loadEscrow(): Promise<void> {
   const result = await api<{ incoming: EscrowRow[]; outgoing: EscrowRow[]; history: EscrowRow[] }>(
     `/ethw/api/escrow?email=${encodeURIComponent(current.email)}`,
   );
-  renderEscrow(incomingList, result.incoming, "Nothing to collect.", (row) => {
-    return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
-  });
+  const hasIncoming = result.incoming.length > 0;
+  collectSection.hidden = !hasIncoming;
+  if (hasIncoming) {
+    renderEscrow(incomingList, result.incoming, "", (row) => {
+      return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+    });
+  } else {
+    incomingList.replaceChildren();
+  }
   renderEscrow(
     outgoingList,
     result.outgoing,
@@ -723,16 +730,16 @@ async function loadEscrow(): Promise<void> {
   renderEscrow(historyList, result.history, "No received payments yet.", (row) => {
     return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
   });
-  if (!config.escrow && result.incoming.length > 0) {
+  if (!config.escrow && hasIncoming) {
     incomingNote.hidden = false;
     incomingNote.textContent = "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected.";
   } else {
     incomingNote.hidden = true;
     incomingNote.textContent = "";
   }
-  syncCollectTip(result.incoming.length > 0);
-  collectButton.hidden = result.incoming.length === 0;
-  if (result.incoming.length > 0) {
+  syncCollectTip(hasIncoming);
+  collectButton.hidden = !hasIncoming;
+  if (hasIncoming) {
     const total = result.incoming.reduce((sum, row) => sum + BigInt(row.amount), 0n);
     setStatus(`You have ${formatUnits(total, decimals)} ${config.symbol} to collect.`);
   }
