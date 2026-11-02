@@ -26054,6 +26054,7 @@ ${prettyStateOverride(stateOverride)}`;
       var openSendButton = document.querySelector("#open-send");
       var sendBackButton = document.querySelector("#send-back");
       var addressEl = document.querySelector("#address");
+      var copyAddressButton = document.querySelector("#copy-address");
       var explorer = document.querySelector("#explorer");
       var qr = document.querySelector("#qr");
       var ethEl = document.querySelector("#eth");
@@ -26073,10 +26074,13 @@ ${prettyStateOverride(stateOverride)}`;
       var sendButton = document.querySelector("#send");
       var incomingList = document.querySelector("#incoming");
       var outgoingList = document.querySelector("#outgoing");
+      var historyList = document.querySelector("#history");
       var incomingNote = document.querySelector("#incoming-note");
+      var incomingTip = document.querySelector("#incoming-tip");
       var collectButton = document.querySelector("#collect");
       var gasEl = document.querySelector("#gas");
       var statusEl = document.querySelector("#status");
+      var COLLECT_TIP_KEY = "ethw.seenCollectTip";
       var config;
       var current = null;
       var decimals = 6;
@@ -26309,17 +26313,47 @@ ${prettyStateOverride(stateOverride)}`;
         link.click();
         setStatus(`Email ready for ${email}: ${amount} ${config.symbol}.`);
       }
+      function shortAddress(value) {
+        if (!/^0x[a-fA-F0-9]{40}$/.test(value)) return value;
+        return `${value.slice(0, 6)}\u2026${value.slice(-4)}`;
+      }
+      function partyLabel(email, address) {
+        const trimmed = email.trim();
+        if (trimmed) return trimmed;
+        if (address) return shortAddress(address);
+        return "Unknown";
+      }
+      async function copyAddress() {
+        if (!current) return;
+        try {
+          await navigator.clipboard.writeText(current.address);
+          copyAddressButton.textContent = "Copied";
+          window.setTimeout(() => {
+            copyAddressButton.textContent = "Copy";
+          }, 1200);
+        } catch {
+          setStatus("Could not copy the address.");
+        }
+      }
+      function markCollectTipSeen() {
+        window.localStorage.setItem(COLLECT_TIP_KEY, "1");
+      }
+      function syncCollectTip(hasIncoming) {
+        const seen = window.localStorage.getItem(COLLECT_TIP_KEY) === "1";
+        incomingTip.hidden = !hasIncoming || seen;
+      }
       async function showWallet(account) {
         current = account;
         window.localStorage.setItem("ethw.email", account.email);
         emailInput.value = account.email;
-        addressEl.textContent = account.address;
+        addressEl.textContent = shortAddress(account.address);
+        addressEl.title = account.address;
         explorer.href = `https://sepolia.basescan.org/address/${account.address}`;
         tokenLabel.textContent = config.symbol;
         gasEl.textContent = config.paymaster ? "Gas is sponsored on Base Sepolia." : "";
         renderRoute();
         syncSendButton();
-        await import_qrcode.default.toCanvas(qr, account.address, { width: 180, margin: 1 });
+        await import_qrcode.default.toCanvas(qr, account.address, { width: 124, margin: 1 });
         await showUserAvatar(account.email);
         await refreshBalances();
         await loadEscrow();
@@ -26580,16 +26614,26 @@ ${prettyStateOverride(stateOverride)}`;
           `/ethw/api/escrow?email=${encodeURIComponent(current.email)}`
         );
         renderEscrow(incomingList, result.incoming, "Nothing to collect.", (row) => {
-          return `${tokenAmount(row.amount)} from ${row.senderEmail}`;
+          return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
         });
         renderEscrow(
           outgoingList,
           result.outgoing,
           "No payments waiting.",
-          (row) => `${tokenAmount(row.amount)} to ${row.recipientEmail} \u2014 not collected yet`,
+          (row) => `${tokenAmount(row.amount)} to ${partyLabel(row.recipientEmail, "")} \u2014 not collected yet`,
           { reclaim: true }
         );
-        incomingNote.textContent = config.escrow ? "Payments held in escrow for this email." : result.incoming.length > 0 ? "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected." : "Set ESCROW_ADDRESS on the server to hold payments for emails that have not registered.";
+        renderEscrow(historyList, result.history, "No received payments yet.", (row) => {
+          return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+        });
+        if (!config.escrow && result.incoming.length > 0) {
+          incomingNote.hidden = false;
+          incomingNote.textContent = "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected.";
+        } else {
+          incomingNote.hidden = true;
+          incomingNote.textContent = "";
+        }
+        syncCollectTip(result.incoming.length > 0);
         collectButton.hidden = result.incoming.length === 0;
         if (result.incoming.length > 0) {
           const total = result.incoming.reduce((sum, row) => sum + BigInt(row.amount), 0n);
@@ -26897,6 +26941,21 @@ ${prettyStateOverride(stateOverride)}`;
       });
       logoutButton.addEventListener("click", () => {
         logout();
+      });
+      copyAddressButton.addEventListener("click", () => {
+        copyAddress().catch((error) => setStatus(explain(error)));
+      });
+      incomingTip.addEventListener("mouseenter", () => {
+        markCollectTipSeen();
+      });
+      incomingTip.addEventListener("focus", () => {
+        markCollectTipSeen();
+      });
+      incomingTip.addEventListener("mouseleave", () => {
+        if (window.localStorage.getItem(COLLECT_TIP_KEY) === "1") incomingTip.hidden = true;
+      });
+      incomingTip.addEventListener("blur", () => {
+        if (window.localStorage.getItem(COLLECT_TIP_KEY) === "1") incomingTip.hidden = true;
       });
       brandHome.addEventListener("click", () => {
         goHome();

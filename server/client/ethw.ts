@@ -40,6 +40,7 @@ type EscrowRow = {
   txHash: string;
   unlockAt: string | null;
   reclaimable: boolean;
+  claimedAt?: string | null;
 };
 
 type StoredAccount = {
@@ -65,6 +66,7 @@ const brandHome = document.querySelector<HTMLButtonElement>("#brand-home")!;
 const openSendButton = document.querySelector<HTMLButtonElement>("#open-send")!;
 const sendBackButton = document.querySelector<HTMLButtonElement>("#send-back")!;
 const addressEl = document.querySelector<HTMLElement>("#address")!;
+const copyAddressButton = document.querySelector<HTMLButtonElement>("#copy-address")!;
 const explorer = document.querySelector<HTMLAnchorElement>("#explorer")!;
 const qr = document.querySelector<HTMLCanvasElement>("#qr")!;
 const ethEl = document.querySelector<HTMLElement>("#eth")!;
@@ -84,10 +86,13 @@ const amountInput = document.querySelector<HTMLInputElement>("#amount")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
 const incomingList = document.querySelector<HTMLElement>("#incoming")!;
 const outgoingList = document.querySelector<HTMLElement>("#outgoing")!;
+const historyList = document.querySelector<HTMLElement>("#history")!;
 const incomingNote = document.querySelector<HTMLElement>("#incoming-note")!;
+const incomingTip = document.querySelector<HTMLButtonElement>("#incoming-tip")!;
 const collectButton = document.querySelector<HTMLButtonElement>("#collect")!;
 const gasEl = document.querySelector<HTMLElement>("#gas")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
+const COLLECT_TIP_KEY = "ethw.seenCollectTip";
 
 type RecipientKind = "empty" | "email" | "phone" | "evm" | "near" | "unknown";
 
@@ -379,17 +384,52 @@ function emailSendNotice(email: string, escrowed: boolean): void {
   setStatus(`Email ready for ${email}: ${amount} ${config.symbol}.`);
 }
 
+function shortAddress(value: string): string {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(value)) return value;
+  return `${value.slice(0, 6)}…${value.slice(-4)}`;
+}
+
+function partyLabel(email: string, address: string): string {
+  const trimmed = email.trim();
+  if (trimmed) return trimmed;
+  if (address) return shortAddress(address);
+  return "Unknown";
+}
+
+async function copyAddress(): Promise<void> {
+  if (!current) return;
+  try {
+    await navigator.clipboard.writeText(current.address);
+    copyAddressButton.textContent = "Copied";
+    window.setTimeout(() => {
+      copyAddressButton.textContent = "Copy";
+    }, 1200);
+  } catch {
+    setStatus("Could not copy the address.");
+  }
+}
+
+function markCollectTipSeen(): void {
+  window.localStorage.setItem(COLLECT_TIP_KEY, "1");
+}
+
+function syncCollectTip(hasIncoming: boolean): void {
+  const seen = window.localStorage.getItem(COLLECT_TIP_KEY) === "1";
+  incomingTip.hidden = !hasIncoming || seen;
+}
+
 async function showWallet(account: StoredAccount): Promise<void> {
   current = account;
   window.localStorage.setItem("ethw.email", account.email);
   emailInput.value = account.email;
-  addressEl.textContent = account.address;
+  addressEl.textContent = shortAddress(account.address);
+  addressEl.title = account.address;
   explorer.href = `https://sepolia.basescan.org/address/${account.address}`;
   tokenLabel.textContent = config.symbol;
   gasEl.textContent = config.paymaster ? "Gas is sponsored on Base Sepolia." : "";
   renderRoute();
   syncSendButton();
-  await QRCode.toCanvas(qr, account.address, { width: 180, margin: 1 });
+  await QRCode.toCanvas(qr, account.address, { width: 124, margin: 1 });
   await showUserAvatar(account.email);
   await refreshBalances();
   await loadEscrow();
@@ -667,24 +707,30 @@ function tokenAmount(amount: string): string {
 
 async function loadEscrow(): Promise<void> {
   if (!current) return;
-  const result = await api<{ incoming: EscrowRow[]; outgoing: EscrowRow[] }>(
+  const result = await api<{ incoming: EscrowRow[]; outgoing: EscrowRow[]; history: EscrowRow[] }>(
     `/ethw/api/escrow?email=${encodeURIComponent(current.email)}`,
   );
   renderEscrow(incomingList, result.incoming, "Nothing to collect.", (row) => {
-    return `${tokenAmount(row.amount)} from ${row.senderEmail}`;
+    return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
   });
   renderEscrow(
     outgoingList,
     result.outgoing,
     "No payments waiting.",
-    (row) => `${tokenAmount(row.amount)} to ${row.recipientEmail} — not collected yet`,
+    (row) => `${tokenAmount(row.amount)} to ${partyLabel(row.recipientEmail, "")} — not collected yet`,
     { reclaim: true },
   );
-  incomingNote.textContent = config.escrow
-    ? "Payments held in escrow for this email."
-    : result.incoming.length > 0
-      ? "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected."
-      : "Set ESCROW_ADDRESS on the server to hold payments for emails that have not registered.";
+  renderEscrow(historyList, result.history, "No received payments yet.", (row) => {
+    return `${tokenAmount(row.amount)} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+  });
+  if (!config.escrow && result.incoming.length > 0) {
+    incomingNote.hidden = false;
+    incomingNote.textContent = "Set ESCROW_ADDRESS and ESCROW_OPERATOR_KEY before these can be collected.";
+  } else {
+    incomingNote.hidden = true;
+    incomingNote.textContent = "";
+  }
+  syncCollectTip(result.incoming.length > 0);
   collectButton.hidden = result.incoming.length === 0;
   if (result.incoming.length > 0) {
     const total = result.incoming.reduce((sum, row) => sum + BigInt(row.amount), 0n);
@@ -1009,6 +1055,21 @@ accountTrigger.addEventListener("click", (event) => {
 });
 logoutButton.addEventListener("click", () => {
   logout();
+});
+copyAddressButton.addEventListener("click", () => {
+  copyAddress().catch((error: unknown) => setStatus(explain(error)));
+});
+incomingTip.addEventListener("mouseenter", () => {
+  markCollectTipSeen();
+});
+incomingTip.addEventListener("focus", () => {
+  markCollectTipSeen();
+});
+incomingTip.addEventListener("mouseleave", () => {
+  if (window.localStorage.getItem(COLLECT_TIP_KEY) === "1") incomingTip.hidden = true;
+});
+incomingTip.addEventListener("blur", () => {
+  if (window.localStorage.getItem(COLLECT_TIP_KEY) === "1") incomingTip.hidden = true;
 });
 brandHome.addEventListener("click", () => {
   goHome();

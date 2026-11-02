@@ -15,6 +15,7 @@ export type EscrowRow = {
   createdAt: string;
   unlockAt: string | null;
   reclaimable: boolean;
+  claimedAt?: string | null;
 };
 
 type DepositRow = {
@@ -27,6 +28,7 @@ type DepositRow = {
   tx_hash: string;
   created_at: string;
   unlock_at: string | null;
+  claimed_at?: string | null;
 };
 
 export type ReceiptLog = {
@@ -79,6 +81,7 @@ function toRow(row: DepositRow): EscrowRow {
     createdAt: row.created_at,
     unlockAt,
     reclaimable,
+    claimedAt: row.claimed_at ?? null,
   };
 }
 
@@ -183,10 +186,14 @@ export function recordDeposits(
   return count;
 }
 
-export function listEscrow(db: Db, email: string): { incoming: EscrowRow[]; outgoing: EscrowRow[] } {
+export function listEscrow(db: Db, email: string): {
+  incoming: EscrowRow[];
+  outgoing: EscrowRow[];
+  history: EscrowRow[];
+} {
   const incoming = db
     .prepare(
-      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at
+      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at, claimed_at
        FROM escrow_deposits
        WHERE recipient_email = ? AND claimed_at IS NULL AND refunded_at IS NULL
        ORDER BY id`,
@@ -194,13 +201,25 @@ export function listEscrow(db: Db, email: string): { incoming: EscrowRow[]; outg
     .all(email) as DepositRow[];
   const outgoing = db
     .prepare(
-      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at
+      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at, claimed_at
        FROM escrow_deposits
        WHERE sender_email = ? AND claimed_at IS NULL AND refunded_at IS NULL
        ORDER BY id`,
     )
     .all(email) as DepositRow[];
-  return { incoming: incoming.map(toRow), outgoing: outgoing.map(toRow) };
+  const history = db
+    .prepare(
+      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at, claimed_at
+       FROM escrow_deposits
+       WHERE recipient_email = ? AND claimed_at IS NOT NULL
+       ORDER BY claimed_at DESC, id DESC`,
+    )
+    .all(email) as DepositRow[];
+  return {
+    incoming: incoming.map(toRow),
+    outgoing: outgoing.map(toRow),
+    history: history.map(toRow),
+  };
 }
 
 export function markClaimed(db: Db, email: string, claimTx: string): void {

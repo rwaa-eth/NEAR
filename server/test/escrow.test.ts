@@ -114,8 +114,18 @@ describe("email escrow", () => {
     assert.equal(outgoing.json().outgoing[0].amount, "1500000");
     assert.equal(outgoing.json().outgoing[0].reclaimable, false);
     assert.equal(outgoing.json().incoming.length, 0);
+    assert.equal(outgoing.json().history.length, 0);
     const incoming = await app.inject({ method: "GET", url: "/ethw/api/escrow?email=friend@example.com" });
     assert.equal(incoming.json().incoming[0].senderEmail, "ada@example.com");
+    assert.equal(incoming.json().history.length, 0);
+    db.prepare(
+      `UPDATE escrow_deposits SET claimed_at = ?, claim_tx = ? WHERE recipient_email = ?`,
+    ).run(new Date().toISOString(), `0x${"ef".repeat(32)}`, "friend@example.com");
+    const claimed = await app.inject({ method: "GET", url: "/ethw/api/escrow?email=friend@example.com" });
+    assert.equal(claimed.json().incoming.length, 0);
+    assert.equal(claimed.json().history.length, 1);
+    assert.equal(claimed.json().history[0].senderEmail, "ada@example.com");
+    assert.equal(claimed.json().history[0].amount, "1500000");
     const refused = await app.inject({
       method: "POST",
       url: "/ethw/api/escrow/deposit",
