@@ -15,10 +15,15 @@ desktop.ini
 export_credentials.cfg
 google-services.json
 
+# Rust
+target/
+
 # Node server
 node_modules/
 server/dist/
 server/data/
+near-server/dist/
+near-server/data/
 *.tsbuildinfo
 
 # Godot

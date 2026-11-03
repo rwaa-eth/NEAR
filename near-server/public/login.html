@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="api-token" content="__API_TOKEN__">
+  <meta name="rp-id" content="__RP_ID__">
+  <title>RWAA login</title>
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <style>
+    body { font-family: Georgia, serif; margin: 2rem auto; max-width: 36rem; color: #14241c; background: #f4f7f4; }
+    button { font: inherit; margin-right: 0.5rem; padding: 0.6rem 0.9rem; }
+    #result { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>RWAA</h1>
+  <p>Create or use the passkey for this domain. The same credential signs into the Android app. The purchase wallet is a later build and uses this account.</p>
+  <p>The passkey wallet is on the <a href="/">home page</a>.</p>
+  <button id="create" type="button">Create passkey</button>
+  <button id="signin" type="button">Sign in</button>
+  <p id="result"></p>
+  <script src="/login.js"></script>
+</body>
+</html>
