@@ -10,6 +10,8 @@ interface IERC20 {
 /// The payer calls deposit. The server operator releases once that email registers.
 /// After CLAIM_PERIOD the payer can reclaim an uncollected deposit.
 /// emailHash is keccak256 of the lowercase email, with no length prefix.
+/// Open deposits for one hash sit in an array. Release pays them all at once.
+/// Reclaim removes one entry by swapping it with the last and popping.
 contract EmailEscrow {
     uint256 public constant CLAIM_PERIOD = 7 days;
 
@@ -18,15 +20,13 @@ contract EmailEscrow {
     uint256 public nextDepositId;
 
     struct Deposit {
-        bytes32 emailHash;
+        uint256 id;
         address from;
         uint256 amount;
         uint64 unlockAt;
-        bool closed;
     }
 
-    mapping(uint256 => Deposit) public deposits;
-    mapping(bytes32 => uint256) public pending;
+    mapping(bytes32 => Deposit[]) private depositsByEmail;
 
     event Deposited(
         uint256 indexed depositId,
@@ -45,7 +45,6 @@ contract EmailEscrow {
     error ZeroAddress();
     error NothingPending();
     error StillLocked();
-    error AlreadyClosed();
     error TransferFailed();
 
     constructor(address token_, address operator_) {
@@ -61,6 +60,10 @@ contract EmailEscrow {
         emit OperatorUpdated(next);
     }
 
+    function getDeposits(bytes32 emailHash) external view returns (Deposit[] memory) {
+        return depositsByEmail[emailHash];
+    }
+
     /// @notice Lock tokens for an email. The caller must approve this contract first.
     function deposit(bytes32 emailHash, uint256 amount) external returns (uint256 depositId) {
         if (amount == 0) revert ZeroAmount();
@@ -70,54 +73,54 @@ contract EmailEscrow {
             nextDepositId = depositId + 1;
         }
         uint64 unlockAt = uint64(block.timestamp + CLAIM_PERIOD);
-        deposits[depositId] = Deposit({
-            emailHash: emailHash,
-            from: msg.sender,
-            amount: amount,
-            unlockAt: unlockAt,
-            closed: false
-        });
-        pending[emailHash] += amount;
+        depositsByEmail[emailHash].push(
+            Deposit({id: depositId, from: msg.sender, amount: amount, unlockAt: unlockAt})
+        );
         emit Deposited(depositId, emailHash, msg.sender, amount, unlockAt);
     }
 
-    /// @notice Send every open deposit for an email to the registered wallet.
+    /// @notice Send every open deposit for an email to the registered wallet, in one transfer.
     function release(bytes32 emailHash, address to) external {
         if (msg.sender != operator) revert NotOperator();
         if (to == address(0)) revert ZeroAddress();
-        uint256 left = pending[emailHash];
-        if (left == 0) revert NothingPending();
-        pending[emailHash] = 0;
-        uint256 end = nextDepositId;
-        for (uint256 id = 0; id < end; ) {
-            Deposit storage item = deposits[id];
-            if (!item.closed && item.emailHash == emailHash) {
-                uint256 amount = item.amount;
-                item.closed = true;
-                item.amount = 0;
-                _call(address(token), abi.encodeCall(IERC20.transfer, (to, amount)));
-                emit Released(id, emailHash, to, amount);
-            }
+        Deposit[] storage rows = depositsByEmail[emailHash];
+        uint256 count = rows.length;
+        if (count == 0) revert NothingPending();
+        uint256 total;
+        for (uint256 i = 0; i < count; ) {
+            total += rows[i].amount;
+            emit Released(rows[i].id, emailHash, to, rows[i].amount);
             unchecked {
-                id += 1;
+                ++i;
             }
         }
+        delete depositsByEmail[emailHash];
+        _call(address(token), abi.encodeCall(IERC20.transfer, (to, total)));
     }
 
-    /// @notice After CLAIM_PERIOD, the original payer can pull an uncollected deposit back.
-    function reclaim(uint256 depositId) external {
-        Deposit storage item = deposits[depositId];
-        if (item.from == address(0) || item.amount == 0) revert NothingPending();
-        if (item.closed) revert AlreadyClosed();
+    /// @notice After CLAIM_PERIOD, the original payer can pull one uncollected deposit back.
+    function reclaim(bytes32 emailHash, uint256 depositId) external {
+        Deposit[] storage rows = depositsByEmail[emailHash];
+        uint256 count = rows.length;
+        uint256 index = count;
+        for (uint256 i = 0; i < count; ) {
+            if (rows[i].id == depositId) {
+                index = i;
+                break;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        if (index == count) revert NothingPending();
+        Deposit memory item = rows[index];
         if (msg.sender != item.from) revert NotSender();
         if (block.timestamp < item.unlockAt) revert StillLocked();
-        uint256 amount = item.amount;
-        bytes32 hash = item.emailHash;
-        item.closed = true;
-        item.amount = 0;
-        pending[hash] -= amount;
-        _call(address(token), abi.encodeCall(IERC20.transfer, (msg.sender, amount)));
-        emit Reclaimed(depositId, msg.sender, amount);
+        uint256 last = count - 1;
+        if (index != last) rows[index] = rows[last];
+        rows.pop();
+        _call(address(token), abi.encodeCall(IERC20.transfer, (msg.sender, item.amount)));
+        emit Reclaimed(depositId, msg.sender, item.amount);
     }
 
     function _call(address target, bytes memory data) private {
