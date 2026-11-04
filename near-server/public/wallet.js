@@ -2870,14 +2870,24 @@ var require_wallet = __commonJS({
       resolvedEl.textContent = account.registered ? `Registered \xB7 ${account.accountId}` : config.escrow ? "Not registered. A send is held until they open a wallet and collect it." : "Not registered. Escrow is not configured on this server.";
       setSendEnabled(Boolean(config.token && config.escrow));
     }
+    async function confirmSendPasskey() {
+      if (!current) return;
+      setStatus("Confirm the passkey prompt.");
+      const existing = passkeys()[current.email];
+      if (existing) {
+        await assertPasskey(existing);
+        return;
+      }
+      savePasskey(current.email, await createPasskey(current.email));
+    }
     async function sendToken() {
       if (!current) return;
       const detected = detectRecipient(recipientInput.value);
       const amount = parseAmount(amountInput.value, config.decimals);
-      const account = await nearAccount();
-      setStatus("Confirm the transaction in this browser.");
       sendButton.disabled = true;
       try {
+        await confirmSendPasskey();
+        const account = await nearAccount();
         if (detected.kind === "email") {
           if (!config.token || !config.escrow) throw new Error("Set NEAR_TOKEN_ACCOUNT and NEAR_ESCROW_ACCOUNT on the server.");
           const outcome = await account.functionCall({
@@ -2914,6 +2924,12 @@ var require_wallet = __commonJS({
         }
         await refreshBalances();
         await loadEscrow();
+      } catch (error) {
+        if (isPasskeyCancel(error)) {
+          setStatus("Passkey sign-in was cancelled.");
+          return;
+        }
+        throw error;
       } finally {
         sendButton.disabled = false;
       }
