@@ -10,7 +10,7 @@ A person with an email, a mobile number, or a lot they walked can be paid a NEAR
 - [x] Deploy the handle escrow (`email:`, `phone:`, `OSM ID:`)
 - [x] Deposit via `ft_transfer_call` works from a script
 - [x] script minting
-- [ ] Relayer pays gas and cannot change the recipient or the amount
+- [ ] Implement gas station
 - [ ] agree on field deployment test
 
 ## 6–8 Nov — Page
