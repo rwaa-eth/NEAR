@@ -2469,7 +2469,14 @@ var require_wallet = __commonJS({
       statusEl.textContent = message;
     }
     function explain(error) {
-      return error instanceof Error ? error.message : "Something went wrong.";
+      const message = error instanceof Error ? error.message : "Something went wrong.";
+      const match = message.match(/"ExecutionError":"((?:\\.|[^"\\])*)"/);
+      if (!match) return message;
+      try {
+        return JSON.parse(`"${match[1]}"`);
+      } catch {
+        return message;
+      }
     }
     async function api(path, body) {
       const response = await fetch(path, {

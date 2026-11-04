@@ -114,7 +114,14 @@ function setStatus(message: string): void {
 }
 
 function explain(error: unknown): string {
-  return error instanceof Error ? error.message : "Something went wrong.";
+  const message = error instanceof Error ? error.message : "Something went wrong.";
+  const match = message.match(/"ExecutionError":"((?:\\.|[^"\\])*)"/);
+  if (!match) return message;
+  try {
+    return JSON.parse(`"${match[1]}"`);
+  } catch {
+    return message;
+  }
 }
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
