@@ -1,0 +1,20 @@
+{
+  "name": "near-deploy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "create": "tsx src/create.ts",
+    "deploy:escrow": "tsx src/deploy-escrow.ts"
+  },
+  "dependencies": {
+    "@scure/base": "^1.2.4",
+    "near-api-js": "^5.1.0",
+    "viem": "^2.38.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
