@@ -101,7 +101,7 @@ let lookupTimer = 0;
 let recipientToken = 0;
 const gravatarCache = new Map<string, string>();
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function syncSetupButtons(): void {
   const ok = EMAIL_PATTERN.test(emailInput.value.trim());
@@ -531,6 +531,12 @@ async function resolveRecipient(): Promise<void> {
     recipientAvatar.hidden = true;
     resolvedEl.textContent = detected.accountId;
     setSendEnabled(Boolean(config.token));
+    return;
+  }
+  if (!EMAIL_PATTERN.test(detected.email)) {
+    recipientAvatar.hidden = true;
+    resolvedEl.textContent = "";
+    setSendEnabled(false);
     return;
   }
   recipientAvatar.hidden = false;

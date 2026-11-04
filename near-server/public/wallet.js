@@ -2459,7 +2459,7 @@ var require_wallet = __commonJS({
     var lookupTimer = 0;
     var recipientToken = 0;
     var gravatarCache = /* @__PURE__ */ new Map();
-    var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
     function syncSetupButtons() {
       const ok = EMAIL_PATTERN.test(emailInput.value.trim());
       openButton.disabled = !ok;
@@ -2846,6 +2846,12 @@ var require_wallet = __commonJS({
         recipientAvatar.hidden = true;
         resolvedEl.textContent = detected.accountId;
         setSendEnabled(Boolean(config.token));
+        return;
+      }
+      if (!EMAIL_PATTERN.test(detected.email)) {
+        recipientAvatar.hidden = true;
+        resolvedEl.textContent = "";
+        setSendEnabled(false);
         return;
       }
       recipientAvatar.hidden = false;
