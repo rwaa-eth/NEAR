@@ -11,7 +11,7 @@ A person with an email, a mobile number, or a lot they walked can be paid a NEAR
 - [x] Deposit via `ft_transfer_call` works from a script
 - [x] Release to a testnet account works from a script
 - [ ] Relayer pays gas and cannot change the recipient or the amount
-- [ ] 45-minute field script agreed
+- [ ] agree on field deployment test
 
 ## 6–8 Nov — Page
 
