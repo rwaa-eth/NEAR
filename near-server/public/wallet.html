@@ -363,7 +363,43 @@
       box-shadow: 0 0 0 4px rgba(224, 138, 43, 0.14);
     }
 
+    @property --await-angle {
+      syntax: "<angle>";
+      inherits: false;
+      initial-value: 0deg;
+    }
+
     .actions { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 1rem; }
+    .await-ring {
+      position: relative;
+      display: inline-flex;
+      border-radius: 999px;
+    }
+    .await-ring[hidden] { display: none !important; }
+    .await-ring.busy .btn { box-shadow: none; }
+    .await-ring.busy::before {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: 999px;
+      padding: 2px;
+      background: conic-gradient(
+        from var(--await-angle),
+        rgba(224, 138, 43, 0.45) 0deg,
+        rgba(224, 138, 43, 0.45) 250deg,
+        #fff8ee 300deg,
+        var(--amber-deep) 340deg,
+        rgba(224, 138, 43, 0.45) 360deg
+      );
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      mask-composite: exclude;
+      animation: await-spin 0.9s linear infinite;
+      pointer-events: none;
+    }
+    .await-ring.busy .btn:disabled { opacity: 1; cursor: progress; }
+    @keyframes await-spin { to { --await-angle: 360deg; } }
     .btn {
       font: inherit;
       font-weight: 700;
@@ -557,7 +593,9 @@
           <p id="incoming-note" class="muted" hidden></p>
           <ul id="incoming"></ul>
           <div class="actions">
-            <button id="collect" class="btn btn-primary" type="button" hidden>Collect</button>
+            <span id="collect-wrap" class="await-ring" hidden>
+              <button id="collect" class="btn btn-primary" type="button">Collect</button>
+            </span>
           </div>
         </div>
 

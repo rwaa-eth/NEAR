@@ -2436,6 +2436,7 @@ var require_wallet = __commonJS({
     var incomingNote = document.querySelector("#incoming-note");
     var incomingList = document.querySelector("#incoming");
     var collectButton = document.querySelector("#collect");
+    var collectWrap = document.querySelector("#collect-wrap");
     var historyList = document.querySelector("#history");
     var outgoingList = document.querySelector("#outgoing");
     var gasEl = document.querySelector("#gas");
@@ -2566,10 +2567,22 @@ var require_wallet = __commonJS({
       const digest = keccak_256(new TextEncoder().encode(email.trim().toLowerCase()));
       return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
     }
-    function formatAmount(amount, decimals) {
-      const digits = amount.replace(/^\-/, "").replace(/\D/g, "").padStart(decimals + 1, "0");
-      const whole = digits.slice(0, -decimals) || "0";
-      const frac = digits.slice(-decimals).replace(/0+$/, "");
+    function formatAmount(amount, decimals, maxDp = decimals) {
+      const digits = amount.replace(/^-/, "").replace(/\D/g, "").padStart(decimals + 1, "0");
+      let whole = digits.slice(0, -decimals) || "0";
+      let frac = digits.slice(-decimals);
+      const places = Math.min(maxDp, frac.length);
+      const keep = frac.slice(0, places);
+      const roundUp = places < frac.length && frac[places] >= "5";
+      if (roundUp) {
+        const bumped = BigInt(whole) * 10n ** BigInt(places) + BigInt(keep || "0") + 1n;
+        const text = bumped.toString().padStart(places + 1, "0");
+        whole = text.slice(0, -places);
+        frac = text.slice(-places);
+      } else {
+        frac = keep;
+      }
+      frac = frac.replace(/0+$/, "");
       return frac ? `${whole}.${frac}` : whole;
     }
     function parseAmount(text, decimals) {
@@ -2627,8 +2640,8 @@ var require_wallet = __commonJS({
       const balances = await api(
         `/ethw/api/balance?accountId=${encodeURIComponent(current.accountId)}`
       );
-      nearBalance.textContent = formatAmount(balances.near, 24);
-      tokenBalance.textContent = balances.token === null ? "\u2014" : formatAmount(balances.token, config.decimals);
+      nearBalance.textContent = formatAmount(balances.near, 24, 3);
+      tokenBalance.textContent = balances.token === null ? "\u2014" : formatAmount(balances.token, config.decimals, 2);
     }
     function partyLabel(email, accountId) {
       return email || accountId;
@@ -2684,7 +2697,7 @@ var require_wallet = __commonJS({
         `/ethw/api/escrow?email=${encodeURIComponent(current.email)}`
       );
       collectSection.hidden = result.incoming.length === 0;
-      collectButton.hidden = result.incoming.length === 0;
+      collectWrap.hidden = result.incoming.length === 0;
       incomingNote.hidden = result.incoming.length === 0;
       incomingNote.textContent = result.incoming.length ? "Held until you collect them into this wallet." : "";
       incomingTip.hidden = window.localStorage.getItem(COLLECT_TIP_KEY) === "1" || result.incoming.length === 0;
@@ -2937,6 +2950,8 @@ var require_wallet = __commonJS({
     async function collectEscrow() {
       if (!current) return;
       collectButton.disabled = true;
+      collectWrap.classList.add("busy");
+      collectButton.setAttribute("aria-busy", "true");
       setStatus("Collecting the escrow balance.");
       try {
         const result = await api("/ethw/api/escrow/release", { email: current.email });
@@ -2944,6 +2959,8 @@ var require_wallet = __commonJS({
         await refreshBalances();
         await loadEscrow();
       } finally {
+        collectWrap.classList.remove("busy");
+        collectButton.removeAttribute("aria-busy");
         collectButton.disabled = false;
       }
     }
