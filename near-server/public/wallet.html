@@ -96,6 +96,7 @@
     }
 
     .account { position: relative; flex: none; display: flex; align-items: center; gap: 0.5rem; }
+    .account[hidden] { display: none !important; }
     .account-email {
       max-width: 9.5rem;
       font-size: 0.82rem;
@@ -498,7 +499,7 @@
       <div id="account" class="account" hidden>
         <span id="account-email" class="account-email"></span>
         <button id="account-trigger" class="account-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">
-          <img id="me" width="34" height="34" alt="Your Gravatar">
+          <img id="me" width="34" height="34" alt="">
         </button>
         <div id="account-menu" class="account-menu" role="menu" hidden>
           <button id="logout" type="button" role="menuitem">Log out</button>
