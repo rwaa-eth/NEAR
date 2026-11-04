@@ -16,17 +16,18 @@ A person with an email, a mobile number, or a lot they walked can be paid a NEAR
 ## 6–8 Nov — Page
 
 - [x] New page, separate from the Base wallet
-- [ ] Pending deposit shows a transaction hash and the reclaim time
+- [x] Pending deposit shows a transaction hash and the reclaim time
 - [x] Collect after email verification and passkey creation
 - [x] Payout shows an outgoing row and a hash
+- [ ] Test Reclaim functionality
 - [ ] Gas is sponsored on release and payout
 - [ ] Dry run of the field script on two phones
 
 ## 9–12 Nov — History and field course
 
 - [ ] Reclaim of an uncollected deposit
-- [ ] CSV dump of the transaction history a bookkeeper can open
-- [ ] README written as do this, see that, with the Base wallet named as baseline
+- [ ] CSV dump of the transaction history a bookkeeper can open or link to account on NEAR blocks
+- [ ] Instructions on how to reclaim, send, collect etc
 - [ ] Screen demo recorded
 - [ ] Mexico session: create passkey, get paid, collect, pay a small amount back, walk the lot, keep the history
 - [ ] Ghana session: same script
