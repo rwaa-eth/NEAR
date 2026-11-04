@@ -40,6 +40,7 @@ type Detected =
   | { kind: "unknown"; label: string; detail: string };
 
 const KEYS = "nearw.keys";
+const PASSKEYS = "nearw.passkeys";
 const EMAIL_KEY = "nearw.email";
 const PENDING_KEY = "nearw.pending";
 const COLLECT_TIP_KEY = "nearw.collectTip";
@@ -139,6 +140,75 @@ function saveKey(accountId: string, secret: string): void {
   const next = keys();
   next[accountId] = secret;
   window.localStorage.setItem(KEYS, JSON.stringify(next));
+}
+
+function passkeys(): Record<string, string> {
+  try {
+    return JSON.parse(window.localStorage.getItem(PASSKEYS) || "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function savePasskey(email: string, credentialId: string): void {
+  const next = passkeys();
+  next[email] = credentialId;
+  window.localStorage.setItem(PASSKEYS, JSON.stringify(next));
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBytes(value: string): Uint8Array {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function isPasskeyCancel(error: unknown): boolean {
+  return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
+}
+
+async function createPasskey(email: string): Promise<string> {
+  if (!window.PublicKeyCredential) throw new Error("This browser cannot create a passkey.");
+  const userId = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email)));
+  const credential = await navigator.credentials.create({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rp: { name: "RaOpenwallet", id: window.location.hostname },
+      user: { id: userId, name: email, displayName: email },
+      pubKeyCredParams: [
+        { type: "public-key", alg: -7 },
+        { type: "public-key", alg: -257 },
+      ],
+      authenticatorSelection: {
+        residentKey: "required",
+        requireResidentKey: true,
+        userVerification: "required",
+      },
+      timeout: 60_000,
+      attestation: "none",
+    },
+  });
+  if (!credential || credential.type !== "public-key") throw new Error("Passkey setup was cancelled.");
+  return bytesToBase64Url(new Uint8Array((credential as PublicKeyCredential).rawId));
+}
+
+async function assertPasskey(credentialId: string): Promise<void> {
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) as BufferSource }],
+      userVerification: "required",
+      timeout: 60_000,
+    },
+  });
+  if (!assertion) throw new Error("Passkey sign-in was cancelled.");
 }
 
 function emailHash(email: string): string {
@@ -336,8 +406,8 @@ async function verifyCode(): Promise<void> {
   const email = emailInput.value.trim().toLowerCase();
   const result = await api<{ emailToken: string }>("/ethw/api/otp/verify", { email, code: otpInput.value.trim() });
   verified = { email, emailToken: result.emailToken };
-  retryButton.hidden = false;
-  setStatus("Email verified. Creating the NEAR account.");
+  retryButton.hidden = true;
+  setStatus("Email verified. Setting up your passkey.");
   await createWallet();
 }
 
@@ -355,16 +425,31 @@ async function createWallet(): Promise<void> {
     setStatus("Verify the email first.");
     return;
   }
-  const key = pendingKey();
-  const created = await api<{ email: string; accountId: string }>("/ethw/api/register", {
-    email: verified.email,
-    publicKey: key.publicKey,
-    emailToken: verified.emailToken,
-  });
-  saveKey(created.accountId, key.secret);
-  window.sessionStorage.removeItem(PENDING_KEY);
-  setStatus(`Account ${created.accountId} is ready.`);
-  await showWallet(created.email, created.accountId, key.secret);
+  retryButton.hidden = true;
+  try {
+    if (!passkeys()[verified.email]) {
+      setStatus("Confirm the passkey prompt.");
+      savePasskey(verified.email, await createPasskey(verified.email));
+    }
+    setStatus("Creating the NEAR account.");
+    const key = pendingKey();
+    const created = await api<{ email: string; accountId: string }>("/ethw/api/register", {
+      email: verified.email,
+      publicKey: key.publicKey,
+      emailToken: verified.emailToken,
+    });
+    saveKey(created.accountId, key.secret);
+    window.sessionStorage.removeItem(PENDING_KEY);
+    setStatus(`Account ${created.accountId} is ready.`);
+    await showWallet(created.email, created.accountId, key.secret);
+  } catch (error) {
+    retryButton.hidden = false;
+    if (isPasskeyCancel(error)) {
+      setStatus("Passkey setup was cancelled. Retry when you are ready.");
+      return;
+    }
+    setStatus(explain(error));
+  }
 }
 
 async function openWallet(): Promise<void> {
@@ -384,6 +469,18 @@ async function openWallet(): Promise<void> {
   if (!secret) {
     setStatus("This wallet was created on another device. The key stays in that browser.");
     return;
+  }
+  setStatus("Confirm the passkey prompt.");
+  try {
+    const existing = passkeys()[email];
+    if (existing) await assertPasskey(existing);
+    else savePasskey(email, await createPasskey(email));
+  } catch (error) {
+    if (isPasskeyCancel(error)) {
+      setStatus("Passkey sign-in was cancelled.");
+      return;
+    }
+    throw error;
   }
   setStatus("");
   await showWallet(email, found.accountId, secret);

@@ -2401,6 +2401,7 @@ var require_wallet = __commonJS({
     init_sha3();
     var import_qrcode = __toESM(require_browser());
     var KEYS = "nearw.keys";
+    var PASSKEYS = "nearw.passkeys";
     var EMAIL_KEY = "nearw.email";
     var PENDING_KEY = "nearw.pending";
     var COLLECT_TIP_KEY = "nearw.collectTip";
@@ -2491,6 +2492,68 @@ var require_wallet = __commonJS({
       const next = keys();
       next[accountId] = secret;
       window.localStorage.setItem(KEYS, JSON.stringify(next));
+    }
+    function passkeys() {
+      try {
+        return JSON.parse(window.localStorage.getItem(PASSKEYS) || "{}");
+      } catch {
+        return {};
+      }
+    }
+    function savePasskey(email, credentialId) {
+      const next = passkeys();
+      next[email] = credentialId;
+      window.localStorage.setItem(PASSKEYS, JSON.stringify(next));
+    }
+    function bytesToBase64Url(bytes) {
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+    function base64UrlToBytes(value) {
+      const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - value.length % 4) % 4);
+      const binary = atob(padded);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+    function isPasskeyCancel(error) {
+      return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
+    }
+    async function createPasskey(email) {
+      if (!window.PublicKeyCredential) throw new Error("This browser cannot create a passkey.");
+      const userId = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email)));
+      const credential = await navigator.credentials.create({
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          rp: { name: "RaOpenwallet", id: window.location.hostname },
+          user: { id: userId, name: email, displayName: email },
+          pubKeyCredParams: [
+            { type: "public-key", alg: -7 },
+            { type: "public-key", alg: -257 }
+          ],
+          authenticatorSelection: {
+            residentKey: "required",
+            requireResidentKey: true,
+            userVerification: "required"
+          },
+          timeout: 6e4,
+          attestation: "none"
+        }
+      });
+      if (!credential || credential.type !== "public-key") throw new Error("Passkey setup was cancelled.");
+      return bytesToBase64Url(new Uint8Array(credential.rawId));
+    }
+    async function assertPasskey(credentialId) {
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) }],
+          userVerification: "required",
+          timeout: 6e4
+        }
+      });
+      if (!assertion) throw new Error("Passkey sign-in was cancelled.");
     }
     function emailHash(email) {
       const digest = keccak_256(new TextEncoder().encode(email.trim().toLowerCase()));
@@ -2665,8 +2728,8 @@ var require_wallet = __commonJS({
       const email = emailInput.value.trim().toLowerCase();
       const result = await api("/ethw/api/otp/verify", { email, code: otpInput.value.trim() });
       verified = { email, emailToken: result.emailToken };
-      retryButton.hidden = false;
-      setStatus("Email verified. Creating the NEAR account.");
+      retryButton.hidden = true;
+      setStatus("Email verified. Setting up your passkey.");
       await createWallet();
     }
     function pendingKey() {
@@ -2682,16 +2745,31 @@ var require_wallet = __commonJS({
         setStatus("Verify the email first.");
         return;
       }
-      const key = pendingKey();
-      const created = await api("/ethw/api/register", {
-        email: verified.email,
-        publicKey: key.publicKey,
-        emailToken: verified.emailToken
-      });
-      saveKey(created.accountId, key.secret);
-      window.sessionStorage.removeItem(PENDING_KEY);
-      setStatus(`Account ${created.accountId} is ready.`);
-      await showWallet(created.email, created.accountId, key.secret);
+      retryButton.hidden = true;
+      try {
+        if (!passkeys()[verified.email]) {
+          setStatus("Confirm the passkey prompt.");
+          savePasskey(verified.email, await createPasskey(verified.email));
+        }
+        setStatus("Creating the NEAR account.");
+        const key = pendingKey();
+        const created = await api("/ethw/api/register", {
+          email: verified.email,
+          publicKey: key.publicKey,
+          emailToken: verified.emailToken
+        });
+        saveKey(created.accountId, key.secret);
+        window.sessionStorage.removeItem(PENDING_KEY);
+        setStatus(`Account ${created.accountId} is ready.`);
+        await showWallet(created.email, created.accountId, key.secret);
+      } catch (error) {
+        retryButton.hidden = false;
+        if (isPasskeyCancel(error)) {
+          setStatus("Passkey setup was cancelled. Retry when you are ready.");
+          return;
+        }
+        setStatus(explain(error));
+      }
     }
     async function openWallet() {
       const email = emailInput.value.trim().toLowerCase();
@@ -2710,6 +2788,18 @@ var require_wallet = __commonJS({
       if (!secret) {
         setStatus("This wallet was created on another device. The key stays in that browser.");
         return;
+      }
+      setStatus("Confirm the passkey prompt.");
+      try {
+        const existing = passkeys()[email];
+        if (existing) await assertPasskey(existing);
+        else savePasskey(email, await createPasskey(email));
+      } catch (error) {
+        if (isPasskeyCancel(error)) {
+          setStatus("Passkey sign-in was cancelled.");
+          return;
+        }
+        throw error;
       }
       setStatus("");
       await showWallet(email, found.accountId, secret);
