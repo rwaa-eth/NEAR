@@ -2458,6 +2458,12 @@ var require_wallet = __commonJS({
     var lookupTimer = 0;
     var recipientToken = 0;
     var gravatarCache = /* @__PURE__ */ new Map();
+    var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    function syncSetupButtons() {
+      const ok = EMAIL_PATTERN.test(emailInput.value.trim());
+      openButton.disabled = !ok;
+      sendCodeButton.disabled = !ok || !config.mailReady;
+    }
     function setStatus(message) {
       statusEl.textContent = message;
     }
@@ -2854,6 +2860,9 @@ var require_wallet = __commonJS({
     openButton.addEventListener("click", () => {
       openWallet().catch((error) => setStatus(explain(error)));
     });
+    emailInput.addEventListener("input", () => {
+      syncSetupButtons();
+    });
     collectButton.addEventListener("click", () => {
       collectEscrow().catch((error) => setStatus(explain(error)));
     });
@@ -2901,7 +2910,10 @@ var require_wallet = __commonJS({
     void api("/ethw/api/config").then(async (loaded) => {
       config = loaded;
       tokenLabel.textContent = config.symbol;
-      sendCodeButton.disabled = !config.mailReady;
+      syncSetupButtons();
+      if (!config.mailReady) {
+        setStatus("Set RESEND_API_KEY, SMTP_URL, or EMAIL_DEV_MODE on the server to verify new wallets.");
+      }
       const saved = window.localStorage.getItem(EMAIL_KEY);
       if (saved) {
         emailInput.value = saved;

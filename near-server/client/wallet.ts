@@ -100,6 +100,14 @@ let lookupTimer = 0;
 let recipientToken = 0;
 const gravatarCache = new Map<string, string>();
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function syncSetupButtons(): void {
+  const ok = EMAIL_PATTERN.test(emailInput.value.trim());
+  openButton.disabled = !ok;
+  sendCodeButton.disabled = !ok || !config.mailReady;
+}
+
 function setStatus(message: string): void {
   statusEl.textContent = message;
 }
@@ -538,6 +546,9 @@ retryButton.addEventListener("click", () => {
 openButton.addEventListener("click", () => {
   openWallet().catch((error: unknown) => setStatus(explain(error)));
 });
+emailInput.addEventListener("input", () => {
+  syncSetupButtons();
+});
 collectButton.addEventListener("click", () => {
   collectEscrow().catch((error: unknown) => setStatus(explain(error)));
 });
@@ -587,7 +598,10 @@ void api<Config>("/ethw/api/config")
   .then(async (loaded) => {
     config = loaded;
     tokenLabel.textContent = config.symbol;
-    sendCodeButton.disabled = !config.mailReady;
+    syncSetupButtons();
+    if (!config.mailReady) {
+      setStatus("Set RESEND_API_KEY, SMTP_URL, or EMAIL_DEV_MODE on the server to verify new wallets.");
+    }
     const saved = window.localStorage.getItem(EMAIL_KEY);
     if (saved) {
       emailInput.value = saved;
