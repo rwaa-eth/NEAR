@@ -15,7 +15,7 @@ A person with an email, a mobile number, or a lot they walked can be paid a NEAR
 
 ## 6–8 Nov — Page
 
-- [x] Pending deposit shows a transaction hash and the reclaim deadline (escrow timeout)
+- [x] Pending deposit shows a transaction hash and the escrow timeout
 - [ ] NEAR wallet page
 - [x] Collect after email verification and passkey creation
 - [x] Payout shows an outgoing row and a hash
