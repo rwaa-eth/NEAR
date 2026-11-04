@@ -23,12 +23,14 @@ A person with an email, a mobile number, or a lot they walked can be paid a NEAR
 - [ ] Gas is sponsored on release and payout
 - [ ] Dry run of the field script on two phones
 
-## 9–12 Nov — History and field course
+## 9 Nov — History and field course
 
 - [ ] Reclaim of an uncollected deposit
 - [ ] CSV dump of the transaction history a bookkeeper can open or link to account on NEAR blocks
 - [ ] Instructions on how to reclaim, send, collect etc
 - [ ] Screen demo recorded
+
+## 9-12 Nov - OSM Polygon account app      
 - [ ] Mexico session: create passkey, get paid, collect, pay a small amount back, walk the lot, keep the history
 - [ ] Ghana session: same script
 - [ ] Walked lot id stored on the account as `lot:`
