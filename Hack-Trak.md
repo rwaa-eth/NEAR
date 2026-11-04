@@ -7,7 +7,7 @@ A person with an email, a mobile number, or a lot they walked can be paid a NEAR
 ## 2–5 Nov — Contract
 
 - [x] Deploy the NEP-141 test stablecoin on NEAR testnet
-- [x] Deploy the handle escrow (`email:`, `phone:`, `lot:`)
+- [x] Deploy the handle escrow (`email:`, `phone:`, `OSM ID:`)
 - [x] Deposit via `ft_transfer_call` works from a script
 - [x] Release to a testnet account works from a script
 - [ ] Relayer pays gas and cannot change the recipient or the amount
