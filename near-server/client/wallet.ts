@@ -55,9 +55,11 @@ const statusEl = document.querySelector<HTMLElement>("#status")!;
 const emailInput = document.querySelector<HTMLInputElement>("#email")!;
 const otpBox = document.querySelector<HTMLElement>("#otp-box")!;
 const otpInput = document.querySelector<HTMLInputElement>("#otp")!;
+const otpDigits = [...document.querySelectorAll<HTMLElement>("#otp-box .otp-digit")];
 const sendCodeButton = document.querySelector<HTMLButtonElement>("#send-code")!;
-const verifyCodeButton = document.querySelector<HTMLButtonElement>("#verify-code")!;
 const retryButton = document.querySelector<HTMLButtonElement>("#retry-passkey")!;
+const creatingWrap = document.querySelector<HTMLElement>("#creating-wrap")!;
+const creatingButton = document.querySelector<HTMLButtonElement>("#creating")!;
 const openButton = document.querySelector<HTMLButtonElement>("#open")!;
 const accountBox = document.querySelector<HTMLElement>("#account")!;
 const accountEmail = document.querySelector<HTMLElement>("#account-email")!;
@@ -86,6 +88,7 @@ const kindChip = document.querySelector<HTMLElement>("#kind-chip")!;
 const resolvedEl = document.querySelector<HTMLElement>("#resolved")!;
 const amountInput = document.querySelector<HTMLInputElement>("#amount")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
+const sendWrap = document.querySelector<HTMLElement>("#send-wrap")!;
 
 let config: Config = {
   network: "testnet",
@@ -99,6 +102,8 @@ let config: Config = {
 let current: { email: string; accountId: string; secret: string } | null = null;
 let verified: { email: string; emailToken: string } | null = null;
 let lookupTimer = 0;
+let otpBusy = false;
+let otpAttempted = "";
 let recipientToken = 0;
 const gravatarCache = new Map<string, string>();
 
@@ -409,6 +414,36 @@ async function showWallet(email: string, accountId: string, secret: string): Pro
   await loadEscrow();
 }
 
+function setCreating(active: boolean): void {
+  creatingWrap.hidden = !active;
+  creatingWrap.classList.toggle("busy", active);
+  creatingButton.disabled = true;
+  creatingButton.setAttribute("aria-busy", active ? "true" : "false");
+  otpInput.disabled = active;
+}
+
+function paintOtp(): void {
+  const digits = otpInput.value;
+  const cursor = digits.length < 6 ? digits.length : 5;
+  const focused = document.activeElement === otpInput;
+  otpDigits.forEach((slot, index) => {
+    slot.textContent = digits[index] ?? "";
+    slot.classList.toggle("filled", index < digits.length);
+    slot.classList.toggle("active", focused && index === cursor);
+  });
+}
+
+function onOtpInput(): void {
+  const digits = otpInput.value.replace(/\D/g, "").slice(0, 6);
+  if (otpInput.value !== digits) otpInput.value = digits;
+  paintOtp();
+  if (digits.length < 6) otpAttempted = "";
+  if (digits.length === 6 && digits !== otpAttempted && !otpBusy) {
+    otpAttempted = digits;
+    verifyCode().catch((error: unknown) => setStatus(explain(error)));
+  }
+}
+
 async function sendCode(): Promise<void> {
   const email = emailInput.value.trim().toLowerCase();
   if (!email) {
@@ -419,16 +454,33 @@ async function sendCode(): Promise<void> {
   const result = await api<{ devCode?: string }>("/ethw/api/otp/send", { email });
   otpBox.hidden = false;
   verified = null;
+  otpAttempted = "";
+  otpInput.value = "";
+  setCreating(false);
+  paintOtp();
+  otpInput.focus();
   setStatus(result.devCode ? `Development code ${result.devCode}` : "Check your email for the code.");
 }
 
 async function verifyCode(): Promise<void> {
+  if (otpBusy) return;
   const email = emailInput.value.trim().toLowerCase();
-  const result = await api<{ emailToken: string }>("/ethw/api/otp/verify", { email, code: otpInput.value.trim() });
-  verified = { email, emailToken: result.emailToken };
-  retryButton.hidden = true;
-  setStatus("Email verified. Setting up your passkey.");
-  await createWallet();
+  const code = otpInput.value.trim();
+  if (code.length !== 6) return;
+  otpBusy = true;
+  setCreating(true);
+  try {
+    const result = await api<{ emailToken: string }>("/ethw/api/otp/verify", { email, code });
+    verified = { email, emailToken: result.emailToken };
+    retryButton.hidden = true;
+    setStatus("Email verified. Setting up your passkey.");
+    await createWallet();
+  } catch (error) {
+    setCreating(false);
+    throw error;
+  } finally {
+    otpBusy = false;
+  }
 }
 
 function pendingKey(): { publicKey: string; secret: string } {
@@ -446,6 +498,7 @@ async function createWallet(): Promise<void> {
     return;
   }
   retryButton.hidden = true;
+  setCreating(true);
   try {
     if (!passkeys()[verified.email]) {
       setStatus("Confirm the passkey prompt.");
@@ -463,6 +516,7 @@ async function createWallet(): Promise<void> {
     setStatus(`Account ${created.accountId} is ready.`);
     await showWallet(created.email, created.accountId, key.secret);
   } catch (error) {
+    setCreating(false);
     retryButton.hidden = false;
     if (isPasskeyCancel(error)) {
       setStatus("Passkey setup was cancelled. Retry when you are ready.");
@@ -589,6 +643,8 @@ async function sendToken(): Promise<void> {
   const detected = detectRecipient(recipientInput.value);
   const amount = parseAmount(amountInput.value, config.decimals);
   sendButton.disabled = true;
+  sendWrap.classList.add("busy");
+  sendButton.setAttribute("aria-busy", "true");
   try {
     await confirmSendPasskey();
     const account = await nearAccount();
@@ -635,6 +691,8 @@ async function sendToken(): Promise<void> {
     }
     throw error;
   } finally {
+    sendWrap.classList.remove("busy");
+    sendButton.removeAttribute("aria-busy");
     sendButton.disabled = false;
   }
 }
@@ -681,9 +739,9 @@ async function reclaimEscrow(row: EscrowRow): Promise<void> {
 sendCodeButton.addEventListener("click", () => {
   sendCode().catch((error: unknown) => setStatus(explain(error)));
 });
-verifyCodeButton.addEventListener("click", () => {
-  verifyCode().catch((error: unknown) => setStatus(explain(error)));
-});
+otpInput.addEventListener("input", () => onOtpInput());
+otpInput.addEventListener("focus", () => paintOtp());
+otpInput.addEventListener("blur", () => paintOtp());
 retryButton.addEventListener("click", () => {
   createWallet().catch((error: unknown) => setStatus(explain(error)));
 });

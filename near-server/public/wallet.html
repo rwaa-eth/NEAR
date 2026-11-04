@@ -398,7 +398,58 @@
       animation: await-spin 0.9s linear infinite;
       pointer-events: none;
     }
-    .await-ring.busy .btn:disabled { opacity: 1; cursor: progress; }
+    .await-ring.busy .btn:disabled:not(.btn-wait) { opacity: 1; cursor: progress; }
+    .btn-wait {
+      background: rgba(26, 20, 15, 0.08);
+      color: var(--muted);
+      box-shadow: none;
+    }
+    .await-ring.busy .btn-wait:disabled { opacity: 0.72; cursor: progress; }
+
+    .otp-field { margin-top: 0.95rem; }
+    .otp-field p {
+      margin: 0;
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+    .otp-slots {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 0.45rem;
+      max-width: 16.5rem;
+      margin-top: 0.35rem;
+    }
+    .otp-digit {
+      height: 2.7rem;
+      border-bottom: 2px solid rgba(26, 20, 15, 0.18);
+      text-align: center;
+      font-family: Syne, Manrope, sans-serif;
+      font-size: 1.45rem;
+      font-weight: 700;
+      line-height: 2.35rem;
+      color: var(--ink);
+    }
+    .otp-digit.filled { border-bottom-color: var(--ink); }
+    .otp-digit.active { border-bottom-color: var(--amber); }
+    .otp-capture {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      opacity: 0;
+      background: transparent;
+      caret-color: transparent;
+      box-shadow: none;
+    }
+    .otp-capture:focus { border-color: transparent; box-shadow: none; }
     @keyframes await-spin { to { --await-angle: 360deg; } }
     .btn {
       font: inherit;
@@ -553,11 +604,22 @@
         <button id="open" class="btn btn-ghost" type="button" disabled>Open wallet</button>
       </div>
       <div id="otp-box" hidden>
-        <label>Verification code
-          <input id="otp" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code">
-        </label>
+        <div class="otp-field">
+          <p>Verification code</p>
+          <div class="otp-slots">
+            <input id="otp" class="otp-capture" inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="6-digit verification code">
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+          </div>
+        </div>
         <div class="actions">
-          <button id="verify-code" class="btn btn-primary" type="button">Verify email</button>
+          <span id="creating-wrap" class="await-ring" hidden>
+            <button id="creating" class="btn btn-wait" type="button" disabled>Creating account</button>
+          </span>
           <button id="retry-passkey" class="btn btn-ghost" type="button" hidden>Retry passkey</button>
         </div>
         <p id="otp-note" class="muted" style="margin-top:0.8rem">We email a code so only the mailbox owner can create this wallet.</p>
@@ -636,7 +698,9 @@
           <input id="amount" inputmode="decimal" placeholder="0.00">
         </label>
         <div class="actions">
-          <button id="send" class="btn btn-primary" type="button">Send</button>
+          <span id="send-wrap" class="await-ring">
+            <button id="send" class="btn btn-primary" type="button">Send</button>
+          </span>
         </div>
       </div>
     </section>

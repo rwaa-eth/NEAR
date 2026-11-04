@@ -2415,9 +2415,11 @@ var require_wallet = __commonJS({
     var emailInput = document.querySelector("#email");
     var otpBox = document.querySelector("#otp-box");
     var otpInput = document.querySelector("#otp");
+    var otpDigits = [...document.querySelectorAll("#otp-box .otp-digit")];
     var sendCodeButton = document.querySelector("#send-code");
-    var verifyCodeButton = document.querySelector("#verify-code");
     var retryButton = document.querySelector("#retry-passkey");
+    var creatingWrap = document.querySelector("#creating-wrap");
+    var creatingButton = document.querySelector("#creating");
     var openButton = document.querySelector("#open");
     var accountBox = document.querySelector("#account");
     var accountEmail = document.querySelector("#account-email");
@@ -2446,6 +2448,7 @@ var require_wallet = __commonJS({
     var resolvedEl = document.querySelector("#resolved");
     var amountInput = document.querySelector("#amount");
     var sendButton = document.querySelector("#send");
+    var sendWrap = document.querySelector("#send-wrap");
     var config = {
       network: "testnet",
       rpc: "/ethw/api/rpc",
@@ -2458,6 +2461,8 @@ var require_wallet = __commonJS({
     var current = null;
     var verified = null;
     var lookupTimer = 0;
+    var otpBusy = false;
+    var otpAttempted = "";
     var recipientToken = 0;
     var gravatarCache = /* @__PURE__ */ new Map();
     var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -2732,6 +2737,33 @@ var require_wallet = __commonJS({
       await refreshBalances();
       await loadEscrow();
     }
+    function setCreating(active) {
+      creatingWrap.hidden = !active;
+      creatingWrap.classList.toggle("busy", active);
+      creatingButton.disabled = true;
+      creatingButton.setAttribute("aria-busy", active ? "true" : "false");
+      otpInput.disabled = active;
+    }
+    function paintOtp() {
+      const digits = otpInput.value;
+      const cursor = digits.length < 6 ? digits.length : 5;
+      const focused = document.activeElement === otpInput;
+      otpDigits.forEach((slot, index) => {
+        slot.textContent = digits[index] ?? "";
+        slot.classList.toggle("filled", index < digits.length);
+        slot.classList.toggle("active", focused && index === cursor);
+      });
+    }
+    function onOtpInput() {
+      const digits = otpInput.value.replace(/\D/g, "").slice(0, 6);
+      if (otpInput.value !== digits) otpInput.value = digits;
+      paintOtp();
+      if (digits.length < 6) otpAttempted = "";
+      if (digits.length === 6 && digits !== otpAttempted && !otpBusy) {
+        otpAttempted = digits;
+        verifyCode().catch((error) => setStatus(explain(error)));
+      }
+    }
     async function sendCode() {
       const email = emailInput.value.trim().toLowerCase();
       if (!email) {
@@ -2742,15 +2774,32 @@ var require_wallet = __commonJS({
       const result = await api("/ethw/api/otp/send", { email });
       otpBox.hidden = false;
       verified = null;
+      otpAttempted = "";
+      otpInput.value = "";
+      setCreating(false);
+      paintOtp();
+      otpInput.focus();
       setStatus(result.devCode ? `Development code ${result.devCode}` : "Check your email for the code.");
     }
     async function verifyCode() {
+      if (otpBusy) return;
       const email = emailInput.value.trim().toLowerCase();
-      const result = await api("/ethw/api/otp/verify", { email, code: otpInput.value.trim() });
-      verified = { email, emailToken: result.emailToken };
-      retryButton.hidden = true;
-      setStatus("Email verified. Setting up your passkey.");
-      await createWallet();
+      const code = otpInput.value.trim();
+      if (code.length !== 6) return;
+      otpBusy = true;
+      setCreating(true);
+      try {
+        const result = await api("/ethw/api/otp/verify", { email, code });
+        verified = { email, emailToken: result.emailToken };
+        retryButton.hidden = true;
+        setStatus("Email verified. Setting up your passkey.");
+        await createWallet();
+      } catch (error) {
+        setCreating(false);
+        throw error;
+      } finally {
+        otpBusy = false;
+      }
     }
     function pendingKey() {
       const saved = window.sessionStorage.getItem(PENDING_KEY);
@@ -2766,6 +2815,7 @@ var require_wallet = __commonJS({
         return;
       }
       retryButton.hidden = true;
+      setCreating(true);
       try {
         if (!passkeys()[verified.email]) {
           setStatus("Confirm the passkey prompt.");
@@ -2783,6 +2833,7 @@ var require_wallet = __commonJS({
         setStatus(`Account ${created.accountId} is ready.`);
         await showWallet(created.email, created.accountId, key.secret);
       } catch (error) {
+        setCreating(false);
         retryButton.hidden = false;
         if (isPasskeyCancel(error)) {
           setStatus("Passkey setup was cancelled. Retry when you are ready.");
@@ -2898,6 +2949,8 @@ var require_wallet = __commonJS({
       const detected = detectRecipient(recipientInput.value);
       const amount = parseAmount(amountInput.value, config.decimals);
       sendButton.disabled = true;
+      sendWrap.classList.add("busy");
+      sendButton.setAttribute("aria-busy", "true");
       try {
         await confirmSendPasskey();
         const account = await nearAccount();
@@ -2944,6 +2997,8 @@ var require_wallet = __commonJS({
         }
         throw error;
       } finally {
+        sendWrap.classList.remove("busy");
+        sendButton.removeAttribute("aria-busy");
         sendButton.disabled = false;
       }
     }
@@ -2987,9 +3042,9 @@ var require_wallet = __commonJS({
     sendCodeButton.addEventListener("click", () => {
       sendCode().catch((error) => setStatus(explain(error)));
     });
-    verifyCodeButton.addEventListener("click", () => {
-      verifyCode().catch((error) => setStatus(explain(error)));
-    });
+    otpInput.addEventListener("input", () => onOtpInput());
+    otpInput.addEventListener("focus", () => paintOtp());
+    otpInput.addEventListener("blur", () => paintOtp());
     retryButton.addEventListener("click", () => {
       createWallet().catch((error) => setStatus(explain(error)));
     });
