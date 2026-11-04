@@ -3,6 +3,9 @@ import { keccak_256 } from "@noble/hashes/sha3";
 import type { Config } from "./config";
 
 const RELEASE_GAS = 100_000_000_000_000n;
+const STORAGE_GAS = 30_000_000_000_000n;
+/** Minimum NEP-145 storage for this token. `storage_balance_bounds.min`. */
+const TOKEN_STORAGE_DEPOSIT = 1_250_000_000_000_000_000_000n;
 
 export type TxOutcome = {
   status?: { SuccessValue?: string; SuccessReceiptId?: string; Failure?: unknown } | string;
@@ -103,6 +106,7 @@ export async function provisionAccount(config: Config, accountId: string, public
     if (!keys.includes(publicKey)) {
       throw Object.assign(new Error("that NEAR account already exists with a different key"), { statusCode: 409 });
     }
+    await ensureTokenStorage(config, accountId);
     return;
   }
   if (config.nearNetwork !== "testnet") {
@@ -117,10 +121,40 @@ export async function provisionAccount(config: Config, accountId: string, public
   if (!response.ok) {
     throw Object.assign(new Error(text || `faucet returned ${response.status}`), { statusCode: 502 });
   }
+  await ensureTokenStorage(config, accountId);
+}
+
+/** Pay the token's storage fee so `accountId` can receive USDT. No-op when it is already registered. */
+export async function ensureTokenStorage(config: Config, accountId: string): Promise<void> {
+  if (!config.tokenAccount || !config.operatorAccount || !config.operatorKey) return;
+  const registered = await callView(config.nearRpcUrl, config.tokenAccount, "storage_balance_of", {
+    account_id: accountId,
+  });
+  if (registered) return;
+  const signer = await operatorSigner(config);
+  await signer.functionCall({
+    contractId: config.tokenAccount,
+    methodName: "storage_deposit",
+    args: { account_id: accountId, registration_only: true },
+    gas: STORAGE_GAS,
+    attachedDeposit: TOKEN_STORAGE_DEPOSIT,
+  });
 }
 
 /** Sign `release` as the escrow owner. The operator key never leaves the server. */
 export async function releaseOnNear(config: Config, emailHashHex: string, receiverId: string): Promise<TxOutcome> {
+  await ensureTokenStorage(config, receiverId);
+  const signer = await operatorSigner(config);
+  return signer.functionCall({
+    contractId: config.escrowAccount,
+    methodName: "release",
+    args: { email_hash: emailHashHex, receiver_id: receiverId },
+    gas: RELEASE_GAS,
+    attachedDeposit: 0n,
+  });
+}
+
+async function operatorSigner(config: Config) {
   const near = await import("near-api-js");
   const keyStore = new near.keyStores.InMemoryKeyStore();
   await keyStore.setKey(config.nearNetwork, config.operatorAccount, operatorKeyPair(near, config.operatorKey));
@@ -129,14 +163,7 @@ export async function releaseOnNear(config: Config, emailHashHex: string, receiv
     nodeUrl: config.nearRpcUrl,
     keyStore,
   });
-  const signer = await connection.account(config.operatorAccount);
-  return signer.functionCall({
-    contractId: config.escrowAccount,
-    methodName: "release",
-    args: { email_hash: emailHashHex, receiver_id: receiverId },
-    gas: RELEASE_GAS,
-    attachedDeposit: 0n,
-  });
+  return connection.account(config.operatorAccount);
 }
 
 function operatorKeyPair(near: typeof import("near-api-js"), secret: string): import("near-api-js").KeyPair {
