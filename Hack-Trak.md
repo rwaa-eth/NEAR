@@ -7,27 +7,31 @@ A person with an email, a mobile number, or a lot they walked can be paid a NEAR
 ## 2–5 Nov — Contract
 
 - [x] Deploy the NEP-141 test stablecoin on NEAR testnet
-- [x] Deploy the handle escrow (`email:`, `phone:`, `lot:`)
+- [x] Deploy the handle escrow (`email:`, `phone:`, `OSM ID:`)
 - [x] Deposit via `ft_transfer_call` works from a script
-- [x] Release to a testnet account works from a script
-- [ ] Relayer pays gas and cannot change the recipient or the amount
-- [ ] 45-minute field script agreed
+- [x] script minting
+- [ ] Implement gas station
+- [ ] agree on field deployment test
 
 ## 6–8 Nov — Page
 
-- [x] New page, separate from the Base wallet
-- [ ] Pending deposit shows a transaction hash and the reclaim time
+- [x] Pending deposit shows a transaction hash and the escrow timeout
+- [x] NEAR wallet page
 - [x] Collect after email verification and passkey creation
 - [x] Payout shows an outgoing row and a hash
+- [ ] Test Reclaim functionality
 - [ ] Gas is sponsored on release and payout
 - [ ] Dry run of the field script on two phones
 
-## 9–12 Nov — History and field course
+## 9 Nov — History and field course
 
 - [ ] Reclaim of an uncollected deposit
-- [ ] CSV dump of the transaction history a bookkeeper can open
-- [ ] README written as do this, see that, with the Base wallet named as baseline
+- [ ] CSV dump of the transaction history a bookkeeper can open or link to account on NEAR blocks
+- [ ] Instructions on how to reclaim, send, collect etc
 - [ ] Screen demo recorded
+
+## 9-12 Nov - OSM Polygon account app     
+
 - [ ] Mexico session: create passkey, get paid, collect, pay a small amount back, walk the lot, keep the history
 - [ ] Ghana session: same script
 - [ ] Walked lot id stored on the account as `lot:`
