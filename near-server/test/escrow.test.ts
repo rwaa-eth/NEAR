@@ -134,8 +134,12 @@ describe("NEAR escrow records", () => {
         assert.equal(incoming.json().history.length, 1);
         assert.equal(incoming.json().history[0].senderEmail, "ada@example.com");
         assert.equal(incoming.json().history[0].amount, "2500000");
+        assert.equal(incoming.json().history[0].direction, "in");
         const sent = await app.inject({ method: "GET", url: "/ethw/api/escrow?email=ada@example.com" });
         assert.equal(sent.json().outgoing.length, 0);
+        assert.equal(sent.json().history.length, 1);
+        assert.equal(sent.json().history[0].direction, "out");
+        assert.equal(sent.json().history[0].recipientEmail, "friend@example.com");
         await app.close();
       });
   });
@@ -163,8 +167,10 @@ describe("NEAR escrow records", () => {
     assert.equal(outgoing.json().outgoing[0].amount, "1500000");
     assert.equal(outgoing.json().outgoing[0].reclaimable, false);
     assert.equal(outgoing.json().incoming.length, 0);
+    assert.equal(outgoing.json().history.length, 0);
     const incoming = await app.inject({ method: "GET", url: "/ethw/api/escrow?email=friend@example.com" });
     assert.equal(incoming.json().incoming[0].senderEmail, "ada@example.com");
+    assert.equal(incoming.json().history.length, 0);
     await app.close();
   });
 

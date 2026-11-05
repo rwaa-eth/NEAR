@@ -18,6 +18,7 @@ export type EscrowRow = {
   unlockAt: string | null;
   reclaimable: boolean;
   claimedAt?: string | null;
+  direction?: "in" | "out";
 };
 
 type DepositRow = {
@@ -225,16 +226,18 @@ export function listEscrow(db: Db, email: string): {
     .all(email) as DepositRow[];
   const history = db
     .prepare(
-      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at, claimed_at
+      `SELECT id, deposit_id, recipient_email, sender_email, sender_address, amount, tx_hash, created_at, unlock_at, claimed_at,
+              CASE WHEN sender_email = ? THEN 'out' ELSE 'in' END AS direction
        FROM escrow_deposits
-       WHERE recipient_email = ? AND claimed_at IS NOT NULL
-       ORDER BY claimed_at DESC, id DESC`,
+       WHERE claimed_at IS NOT NULL AND refunded_at IS NULL
+         AND (recipient_email = ? OR sender_email = ?)
+       ORDER BY CASE WHEN sender_email = ? THEN created_at ELSE claimed_at END DESC, id DESC`,
     )
-    .all(email) as DepositRow[];
+    .all(email, email, email, email) as Array<DepositRow & { direction: "in" | "out" }>;
   return {
     incoming: incoming.map(toRow),
     outgoing: outgoing.map(toRow),
-    history: history.map(toRow),
+    history: history.map((row) => ({ ...toRow(row), direction: row.direction })),
   };
 }
 

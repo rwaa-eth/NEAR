@@ -31,6 +31,7 @@ type EscrowRow = {
   unlockAt: string | null;
   reclaimable: boolean;
   claimedAt?: string | null;
+  direction?: "in" | "out";
 };
 
 type Detected =
@@ -322,8 +323,8 @@ function setBalance(el: HTMLElement, text: string): void {
   el.textContent = text;
 }
 
-async function refreshBalances(initial = false): Promise<void> {
-  if (!current || (balanceInFlight && !initial)) return;
+async function refreshBalances(initial = false): Promise<boolean> {
+  if (!current || (balanceInFlight && !initial)) return false;
   balanceInFlight = true;
   if (initial) {
     showBalanceSpinner(nearBalance, "Loading NEAR balance");
@@ -333,8 +334,12 @@ async function refreshBalances(initial = false): Promise<void> {
     const balances = await api<{ near: string; token: string | null }>(
       `/ethw/api/balance?accountId=${encodeURIComponent(current.accountId)}`,
     );
+    const nextToken = balances.token === null ? "—" : formatAmount(balances.token, config.decimals, 2);
+    const tokenChanged =
+      !initial && !tokenBalance.querySelector(".amount-spin") && tokenBalance.textContent !== nextToken && nextToken !== "—";
     setBalance(nearBalance, formatAmount(balances.near, 24, 3));
-    setBalance(tokenBalance, balances.token === null ? "—" : formatAmount(balances.token, config.decimals, 2));
+    setBalance(tokenBalance, nextToken);
+    return tokenChanged;
   } finally {
     balanceInFlight = false;
   }
@@ -343,7 +348,11 @@ async function refreshBalances(initial = false): Promise<void> {
 function startBalanceRefresh(): void {
   window.clearInterval(balanceTimer);
   balanceTimer = window.setInterval(() => {
-    refreshBalances().catch(() => undefined);
+    refreshBalances()
+      .then((tokenChanged) => {
+        if (tokenChanged) return loadEscrow();
+      })
+      .catch(() => undefined);
   }, 10_000);
 }
 
@@ -364,8 +373,13 @@ function unlockLabel(row: EscrowRow): string {
   return `pull-back in ${days} day${days === 1 ? "" : "s"}`;
 }
 
+function historySent(row: EscrowRow): boolean {
+  return row.direction === "out" || (row.direction == null && row.senderEmail === current?.email);
+}
+
 function historyInstant(row: EscrowRow): Date | null {
-  const parsed = Date.parse(row.claimedAt || row.createdAt);
+  const raw = historySent(row) ? row.createdAt : row.claimedAt || row.createdAt;
+  const parsed = Date.parse(raw);
   return Number.isNaN(parsed) ? null : new Date(parsed);
 }
 
@@ -404,11 +418,15 @@ function renderHistory(rows: EscrowRow[]): void {
       const time = document.createElement("time");
       time.className = "when";
       time.dateTime = when.toISOString();
-      time.textContent = when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      time.textContent = when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
       item.append(time);
     }
+    const sent = historySent(row);
     const text = document.createElement("span");
-    text.textContent = `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+    const who = sent
+      ? `to ${partyLabel(row.recipientEmail, "")}`
+      : `from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+    text.textContent = `${sent ? "-" : "+"}${formatAmount(row.amount, config.decimals)} ${config.symbol} ${who}`;
     item.append(text);
     if (row.txHash) {
       const link = document.createElement("a");

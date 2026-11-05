@@ -2655,7 +2655,7 @@ var require_wallet = __commonJS({
       el.textContent = text;
     }
     async function refreshBalances(initial = false) {
-      if (!current || balanceInFlight && !initial) return;
+      if (!current || balanceInFlight && !initial) return false;
       balanceInFlight = true;
       if (initial) {
         showBalanceSpinner(nearBalance, "Loading NEAR balance");
@@ -2665,8 +2665,11 @@ var require_wallet = __commonJS({
         const balances = await api(
           `/ethw/api/balance?accountId=${encodeURIComponent(current.accountId)}`
         );
+        const nextToken = balances.token === null ? "\u2014" : formatAmount(balances.token, config.decimals, 2);
+        const tokenChanged = !initial && !tokenBalance.querySelector(".amount-spin") && tokenBalance.textContent !== nextToken && nextToken !== "\u2014";
         setBalance(nearBalance, formatAmount(balances.near, 24, 3));
-        setBalance(tokenBalance, balances.token === null ? "\u2014" : formatAmount(balances.token, config.decimals, 2));
+        setBalance(tokenBalance, nextToken);
+        return tokenChanged;
       } finally {
         balanceInFlight = false;
       }
@@ -2674,7 +2677,9 @@ var require_wallet = __commonJS({
     function startBalanceRefresh() {
       window.clearInterval(balanceTimer);
       balanceTimer = window.setInterval(() => {
-        refreshBalances().catch(() => void 0);
+        refreshBalances().then((tokenChanged) => {
+          if (tokenChanged) return loadEscrow();
+        }).catch(() => void 0);
       }, 1e4);
     }
     function stopBalanceRefresh() {
@@ -2691,8 +2696,12 @@ var require_wallet = __commonJS({
       const days = Math.max(1, Math.ceil((unlockMs - Date.now()) / (24 * 60 * 60 * 1e3)));
       return `pull-back in ${days} day${days === 1 ? "" : "s"}`;
     }
+    function historySent(row) {
+      return row.direction === "out" || row.direction == null && row.senderEmail === current?.email;
+    }
     function historyInstant(row) {
-      const parsed = Date.parse(row.claimedAt || row.createdAt);
+      const raw = historySent(row) ? row.createdAt : row.claimedAt || row.createdAt;
+      const parsed = Date.parse(raw);
       return Number.isNaN(parsed) ? null : new Date(parsed);
     }
     function dayLabel(date) {
@@ -2729,11 +2738,13 @@ var require_wallet = __commonJS({
           const time = document.createElement("time");
           time.className = "when";
           time.dateTime = when.toISOString();
-          time.textContent = when.toLocaleTimeString(void 0, { hour: "numeric", minute: "2-digit" });
+          time.textContent = when.toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
           item.append(time);
         }
+        const sent = historySent(row);
         const text = document.createElement("span");
-        text.textContent = `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+        const who = sent ? `to ${partyLabel(row.recipientEmail, "")}` : `from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+        text.textContent = `${sent ? "-" : "+"}${formatAmount(row.amount, config.decimals)} ${config.symbol} ${who}`;
         item.append(text);
         if (row.txHash) {
           const link = document.createElement("a");
