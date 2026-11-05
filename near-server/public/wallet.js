@@ -2412,6 +2412,14 @@ var require_wallet = __commonJS({
     var sendView = document.querySelector("#send-view");
     var sendDock = document.querySelector("#send-dock");
     var statusEl = document.querySelector("#status");
+    statusEl.addEventListener("transitionend", (event) => {
+      if (event.propertyName !== "opacity" || !statusEl.classList.contains("fade")) return;
+      statusEl.classList.add("showing");
+      statusEl.textContent = "";
+      statusEl.classList.remove("fade");
+      void statusEl.offsetWidth;
+      statusEl.classList.remove("showing");
+    });
     var emailInput = document.querySelector("#email");
     var otpBox = document.querySelector("#otp-box");
     var otpInput = document.querySelector("#otp");
@@ -2474,8 +2482,16 @@ var require_wallet = __commonJS({
       openButton.disabled = !ok;
       sendCodeButton.disabled = !ok || !config.mailReady;
     }
+    var toastTimer = 0;
     function setStatus(message) {
+      window.clearTimeout(toastTimer);
+      statusEl.classList.add("showing");
+      statusEl.classList.remove("fade");
       statusEl.textContent = message;
+      void statusEl.offsetWidth;
+      statusEl.classList.remove("showing");
+      if (!message) return;
+      toastTimer = window.setTimeout(() => statusEl.classList.add("fade"), 1e4);
     }
     function explain(error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";

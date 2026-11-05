@@ -54,6 +54,14 @@ const wallet = document.querySelector<HTMLElement>("#wallet")!;
 const sendView = document.querySelector<HTMLElement>("#send-view")!;
 const sendDock = document.querySelector<HTMLElement>("#send-dock")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
+statusEl.addEventListener("transitionend", (event) => {
+  if (event.propertyName !== "opacity" || !statusEl.classList.contains("fade")) return;
+  statusEl.classList.add("showing");
+  statusEl.textContent = "";
+  statusEl.classList.remove("fade");
+  void statusEl.offsetWidth;
+  statusEl.classList.remove("showing");
+});
 const emailInput = document.querySelector<HTMLInputElement>("#email")!;
 const otpBox = document.querySelector<HTMLElement>("#otp-box")!;
 const otpInput = document.querySelector<HTMLInputElement>("#otp")!;
@@ -120,8 +128,17 @@ function syncSetupButtons(): void {
   sendCodeButton.disabled = !ok || !config.mailReady;
 }
 
+let toastTimer = 0;
+
 function setStatus(message: string): void {
+  window.clearTimeout(toastTimer);
+  statusEl.classList.add("showing");
+  statusEl.classList.remove("fade");
   statusEl.textContent = message;
+  void statusEl.offsetWidth;
+  statusEl.classList.remove("showing");
+  if (!message) return;
+  toastTimer = window.setTimeout(() => statusEl.classList.add("fade"), 10_000);
 }
 
 function explain(error: unknown): string {
