@@ -2440,6 +2440,7 @@ var require_wallet = __commonJS({
     var collectButton = document.querySelector("#collect");
     var collectWrap = document.querySelector("#collect-wrap");
     var historyList = document.querySelector("#history");
+    var outgoingSection = document.querySelector("#outgoing-section");
     var outgoingList = document.querySelector("#outgoing");
     var gasEl = document.querySelector("#gas");
     var recipientInput = document.querySelector("#recipient");
@@ -2463,6 +2464,8 @@ var require_wallet = __commonJS({
     var lookupTimer = 0;
     var otpBusy = false;
     var otpAttempted = "";
+    var balanceTimer = 0;
+    var balanceInFlight = false;
     var recipientToken = 0;
     var gravatarCache = /* @__PURE__ */ new Map();
     var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -2640,13 +2643,43 @@ var require_wallet = __commonJS({
       });
       return near.account(current.accountId);
     }
-    async function refreshBalances() {
-      if (!current) return;
-      const balances = await api(
-        `/ethw/api/balance?accountId=${encodeURIComponent(current.accountId)}`
-      );
-      nearBalance.textContent = formatAmount(balances.near, 24, 3);
-      tokenBalance.textContent = balances.token === null ? "\u2014" : formatAmount(balances.token, config.decimals, 2);
+    function showBalanceSpinner(el, label) {
+      el.replaceChildren();
+      const spin = document.createElement("span");
+      spin.className = "amount-spin";
+      spin.setAttribute("aria-label", label);
+      el.append(spin);
+    }
+    function setBalance(el, text) {
+      if (!el.querySelector(".amount-spin") && el.textContent === text) return;
+      el.textContent = text;
+    }
+    async function refreshBalances(initial = false) {
+      if (!current || balanceInFlight && !initial) return;
+      balanceInFlight = true;
+      if (initial) {
+        showBalanceSpinner(nearBalance, "Loading NEAR balance");
+        showBalanceSpinner(tokenBalance, "Loading USDT balance");
+      }
+      try {
+        const balances = await api(
+          `/ethw/api/balance?accountId=${encodeURIComponent(current.accountId)}`
+        );
+        setBalance(nearBalance, formatAmount(balances.near, 24, 3));
+        setBalance(tokenBalance, balances.token === null ? "\u2014" : formatAmount(balances.token, config.decimals, 2));
+      } finally {
+        balanceInFlight = false;
+      }
+    }
+    function startBalanceRefresh() {
+      window.clearInterval(balanceTimer);
+      balanceTimer = window.setInterval(() => {
+        refreshBalances().catch(() => void 0);
+      }, 1e4);
+    }
+    function stopBalanceRefresh() {
+      window.clearInterval(balanceTimer);
+      balanceTimer = 0;
     }
     function partyLabel(email, accountId) {
       return email || accountId;
@@ -2715,13 +2748,16 @@ var require_wallet = __commonJS({
         "No collected payments yet.",
         (row) => `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`
       );
-      renderRows(
-        outgoingList,
-        result.outgoing,
-        "Nothing waiting.",
-        (row) => `${formatAmount(row.amount, config.decimals)} ${config.symbol} to ${partyLabel(row.recipientEmail, "")}`,
-        true
-      );
+      outgoingSection.hidden = result.outgoing.length === 0;
+      if (result.outgoing.length > 0) {
+        renderRows(
+          outgoingList,
+          result.outgoing,
+          "",
+          (row) => `${formatAmount(row.amount, config.decimals)} ${config.symbol} to ${partyLabel(row.recipientEmail, "")}`,
+          true
+        );
+      }
     }
     async function showWallet(email, accountId, secret) {
       current = { email, accountId, secret };
@@ -2734,7 +2770,8 @@ var require_wallet = __commonJS({
       gasEl.textContent = "Network fees are paid from your NEAR balance.";
       await import_qrcode.default.toCanvas(qr, accountId, { width: 124, margin: 1 });
       renderRoute();
-      await refreshBalances();
+      startBalanceRefresh();
+      await refreshBalances(true);
       await loadEscrow();
     }
     function setCreating(active) {
@@ -2877,6 +2914,7 @@ var require_wallet = __commonJS({
     }
     function logout() {
       current = null;
+      stopBalanceRefresh();
       window.localStorage.removeItem(EMAIL_KEY);
       accountMenu.hidden = true;
       show("setup");

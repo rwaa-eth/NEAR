@@ -192,6 +192,26 @@
       font-weight: 700;
       letter-spacing: -0.03em;
     }
+    .amount-spin {
+      display: inline-block;
+      width: 1.05rem;
+      height: 1.05rem;
+      margin-bottom: 0.12rem;
+      border-radius: 50%;
+      padding: 2px;
+      vertical-align: middle;
+      background: conic-gradient(
+        from var(--await-angle),
+        rgba(232, 132, 42, 0.28) 0deg,
+        rgba(232, 132, 42, 0.28) 270deg,
+        var(--amber) 360deg
+      );
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      mask-composite: exclude;
+      animation: await-spin 0.9s linear infinite;
+    }
 
     .receive-grid {
       display: grid;
@@ -630,8 +650,8 @@
       <div class="panel">
         <p class="hero-copy"><strong>Your wallet</strong> on NEAR testnet. Share the QR to receive.</p>
         <div class="balances">
-          <div class="balance-row"><span>NEAR</span><strong id="eth">…</strong></div>
-          <div class="balance-row"><span id="token-label">USDT</span><strong id="token">…</strong></div>
+          <div class="balance-row"><span>NEAR</span><strong id="eth"><span class="amount-spin" aria-label="Loading NEAR balance"></span></strong></div>
+          <div class="balance-row"><span id="token-label">USDT</span><strong id="token"><span class="amount-spin" aria-label="Loading USDT balance"></span></strong></div>
         </div>
         <div class="receive-grid">
           <div class="address-block">
@@ -668,7 +688,7 @@
           <ul id="history"></ul>
         </div>
 
-        <div class="section">
+        <div id="outgoing-section" class="section" hidden>
           <div class="section-title">
             <h2>Waiting for collection</h2>
             <button id="outgoing-tip" class="tip" type="button" data-tip="Uncollected payments. After one week you can pull them back." aria-label="About waiting payments">?</button>
