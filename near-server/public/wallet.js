@@ -2691,6 +2691,61 @@ var require_wallet = __commonJS({
       const days = Math.max(1, Math.ceil((unlockMs - Date.now()) / (24 * 60 * 60 * 1e3)));
       return `pull-back in ${days} day${days === 1 ? "" : "s"}`;
     }
+    function historyInstant(row) {
+      const parsed = Date.parse(row.claimedAt || row.createdAt);
+      return Number.isNaN(parsed) ? null : new Date(parsed);
+    }
+    function dayLabel(date) {
+      const today = /* @__PURE__ */ new Date();
+      const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+      const days = Math.round((todayStart - start) / 864e5);
+      if (days === 0) return "Today";
+      if (days === 1) return "Yesterday";
+      const sameYear = date.getFullYear() === today.getFullYear();
+      return date.toLocaleDateString(void 0, sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
+    }
+    function renderHistory(rows) {
+      historyList.replaceChildren();
+      if (rows.length === 0) {
+        const item = document.createElement("li");
+        item.textContent = "No payments yet.";
+        historyList.append(item);
+        return;
+      }
+      let shownDay = "";
+      for (const row of rows) {
+        const when = historyInstant(row);
+        const key = when ? `${when.getFullYear()}-${when.getMonth()}-${when.getDate()}` : "";
+        if (key !== shownDay) {
+          shownDay = key;
+          const head = document.createElement("li");
+          head.className = "day";
+          head.textContent = when ? dayLabel(when) : "Undated";
+          historyList.append(head);
+        }
+        const item = document.createElement("li");
+        if (when) {
+          const time = document.createElement("time");
+          time.className = "when";
+          time.dateTime = when.toISOString();
+          time.textContent = when.toLocaleTimeString(void 0, { hour: "numeric", minute: "2-digit" });
+          item.append(time);
+        }
+        const text = document.createElement("span");
+        text.textContent = `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+        item.append(text);
+        if (row.txHash) {
+          const link = document.createElement("a");
+          link.href = `${explorerBase()}/txns/${row.txHash}`;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = " tx";
+          item.append(link);
+        }
+        historyList.append(item);
+      }
+    }
     function renderRows(list, rows, empty, label, reclaim = false) {
       list.replaceChildren();
       if (rows.length === 0) {
@@ -2742,12 +2797,7 @@ var require_wallet = __commonJS({
       renderRows(incomingList, result.incoming, "", (row) => {
         return `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
       });
-      renderRows(
-        historyList,
-        result.history,
-        "No collected payments yet.",
-        (row) => `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`
-      );
+      renderHistory(result.history);
       outgoingSection.hidden = result.outgoing.length === 0;
       if (result.outgoing.length > 0) {
         renderRows(
@@ -2970,7 +3020,7 @@ var require_wallet = __commonJS({
       );
       if (token !== recipientToken) return;
       resolvedEl.textContent = account.registered ? `Registered \xB7 ${account.accountId}` : config.escrow ? "Not registered. A send is held until they open a wallet and collect it." : "Not registered. Escrow is not configured on this server.";
-      setSendEnabled(Boolean(config.token && config.escrow));
+      setSendEnabled(Boolean(config.token && (account.registered || config.escrow)));
     }
     async function confirmSendPasskey() {
       if (!current) return;
@@ -2993,26 +3043,48 @@ var require_wallet = __commonJS({
         await confirmSendPasskey();
         const account = await nearAccount();
         if (detected.kind === "email") {
-          if (!config.token || !config.escrow) throw new Error("Set NEAR_TOKEN_ACCOUNT and NEAR_ESCROW_ACCOUNT on the server.");
-          const outcome = await account.functionCall({
-            contractId: config.token,
-            methodName: "ft_transfer_call",
-            args: {
-              receiver_id: config.escrow,
-              amount: amount.toString(),
-              memo: null,
-              msg: emailHash(detected.email)
-            },
-            gas: CALL_GAS,
-            attachedDeposit: 1n
-          });
-          const hash = outcome.transaction.hash;
-          await api("/ethw/api/escrow/deposit", {
-            senderEmail: current.email,
-            recipientEmail: detected.email,
-            txHash: hash
-          });
-          setStatus(`Held for ${detected.email}. ${hash}`);
+          if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
+          const recipient = await api(
+            `/ethw/api/account?email=${encodeURIComponent(detected.email)}`
+          );
+          if (recipient.registered && recipient.accountId) {
+            if (recipient.accountId === current.accountId) throw new Error("Choose a different recipient.");
+            const outcome = await account.functionCall({
+              contractId: config.token,
+              methodName: "ft_transfer",
+              args: { receiver_id: recipient.accountId, amount: amount.toString(), memo: null },
+              gas: TRANSFER_GAS,
+              attachedDeposit: 1n
+            });
+            const hash = outcome.transaction.hash;
+            await api("/ethw/api/transfer", {
+              senderEmail: current.email,
+              recipientEmail: detected.email,
+              txHash: hash
+            });
+            setStatus(`Sent to ${detected.email}. ${hash}`);
+          } else {
+            if (!config.escrow) throw new Error("Set NEAR_ESCROW_ACCOUNT on the server.");
+            const outcome = await account.functionCall({
+              contractId: config.token,
+              methodName: "ft_transfer_call",
+              args: {
+                receiver_id: config.escrow,
+                amount: amount.toString(),
+                memo: null,
+                msg: emailHash(detected.email)
+              },
+              gas: CALL_GAS,
+              attachedDeposit: 1n
+            });
+            const hash = outcome.transaction.hash;
+            await api("/ethw/api/escrow/deposit", {
+              senderEmail: current.email,
+              recipientEmail: detected.email,
+              txHash: hash
+            });
+            setStatus(`Held for ${detected.email}. ${hash}`);
+          }
         } else if (detected.kind === "near") {
           if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
           const outcome = await account.functionCall({

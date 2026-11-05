@@ -13,7 +13,9 @@ import {
   readOpenDeposit,
   paymentsFromOutcome,
   recordDeposits,
+  recordDirectPayments,
   releaseOnChain,
+  transfersFromOutcome,
 } from "./escrow";
 import { mailConfigured, sendMail } from "./mail";
 import { accountIdForEmail, accountBalance, callView, fetchTx, provisionAccount } from "./near";
@@ -204,6 +206,39 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
   app.get("/ethw/api/escrow", async (request) => {
     const query = z.object({ email }).parse(request.query);
     return listEscrow(db, query.email);
+  });
+
+  app.post("/ethw/api/transfer", async (request) => {
+    if (!config.tokenAccount) throw statusError(400, "Set NEAR_TOKEN_ACCOUNT on the server");
+    const body = depositBody.parse(request.body);
+    if (body.senderEmail === body.recipientEmail) throw statusError(400, "Choose a different recipient.");
+    const sender = readAccount(db, body.senderEmail);
+    if (!sender) throw statusError(404, "sender email is not registered");
+    const recipient = readAccount(db, body.recipientEmail);
+    if (!recipient) throw statusError(404, "recipient email is not registered");
+    let outcome;
+    try {
+      outcome = await fetchTx(config.nearRpcUrl, body.txHash, sender.accountId);
+    } catch (error) {
+      throw statusError(502, error instanceof Error ? error.message : "could not read the transfer");
+    }
+    if (outcome.transaction?.signer_id !== sender.accountId) {
+      throw statusError(400, "that transaction was not signed by this wallet");
+    }
+    const parsed = transfersFromOutcome(outcome, config.tokenAccount, sender.accountId, recipient.accountId);
+    if (parsed.length === 0) throw statusError(400, "that transaction does not pay this account");
+    recordDirectPayments(
+      db,
+      parsed.map((transfer) => ({
+        recipientEmail: recipient.email,
+        senderEmail: sender.email,
+        senderAddress: sender.accountId,
+        amount: transfer.amount,
+        txHash: body.txHash,
+        logIndex: transfer.logIndex,
+      })),
+    );
+    return listEscrow(db, sender.email);
   });
 
   app.post("/ethw/api/escrow/deposit", async (request) => {

@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { buildApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { openDatabase } from "../src/db";
-import { depositsFromOutcome, emailHash, paymentsFromOutcome, recordDeposits } from "../src/escrow";
+import { depositsFromOutcome, emailHash, paymentsFromOutcome, recordDeposits, recordDirectPayments, transfersFromOutcome } from "../src/escrow";
 import { accountIdForEmail, type TxOutcome } from "../src/near";
 
 const escrow = "escrow.testnet";
@@ -99,6 +99,45 @@ describe("NEAR escrow records", () => {
     assert.equal(id, accountIdForEmail("ada@example.com"));
     assert.match(id, /^rw[0-9a-f]{16}\.testnet$/);
     assert.equal(accountIdForEmail("ada@example.com", "mainnet").endsWith(".near"), true);
+  });
+
+  it("reads a direct ft_transfer and files it in the recipient history", () => {
+    const token = "token.testnet";
+    const receiver = "rw2222222222222222.testnet";
+    const log = `EVENT_JSON:${JSON.stringify({
+      standard: "nep141",
+      version: "1.0.0",
+      event: "ft_transfer",
+      data: [{ old_owner_id: sender, new_owner_id: receiver, amount: "2500000" }],
+    })}`;
+    const receipt = outcome(log);
+    receipt.receipts_outcome![0].outcome!.executor_id = token;
+    const parsed = transfersFromOutcome(receipt, token, sender, receiver);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0].amount, "2500000");
+    assert.equal(transfersFromOutcome(receipt, token, sender, "other.testnet").length, 0);
+    const { app, db } = appWith();
+    recordDirectPayments(db, [
+      {
+        recipientEmail: "friend@example.com",
+        senderEmail: "ada@example.com",
+        senderAddress: sender,
+        amount: parsed[0].amount,
+        txHash: "Hash33333333333333333333333333333333",
+        logIndex: parsed[0].logIndex,
+      },
+    ]);
+    return app
+      .inject({ method: "GET", url: "/ethw/api/escrow?email=friend@example.com" })
+      .then(async (incoming) => {
+        assert.equal(incoming.json().incoming.length, 0);
+        assert.equal(incoming.json().history.length, 1);
+        assert.equal(incoming.json().history[0].senderEmail, "ada@example.com");
+        assert.equal(incoming.json().history[0].amount, "2500000");
+        const sent = await app.inject({ method: "GET", url: "/ethw/api/escrow?email=ada@example.com" });
+        assert.equal(sent.json().outgoing.length, 0);
+        await app.close();
+      });
   });
 
   it("lists uncollected payments for the sender and the recipient", async () => {

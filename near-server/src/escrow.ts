@@ -109,6 +109,41 @@ export function depositsFromOutcome(outcome: TxOutcome, escrow: string, expected
   return found;
 }
 
+export type ParsedTransfer = {
+  from: string;
+  to: string;
+  amount: string;
+  logIndex: number;
+};
+
+/** NEP-141 `ft_transfer` events on the token account, limited to one sender and receiver. */
+export function transfersFromOutcome(outcome: TxOutcome, token: string, from: string, to: string): ParsedTransfer[] {
+  if (outcomeFailed(outcome)) return [];
+  const found: ParsedTransfer[] = [];
+  let logIndex = 0;
+  for (const receipt of outcome.receipts_outcome ?? []) {
+    if (receipt.outcome?.executor_id !== token) continue;
+    if (failed(receipt.outcome.status)) continue;
+    for (const line of receipt.outcome.logs ?? []) {
+      if (!line.startsWith("EVENT_JSON:")) continue;
+      let event: { event?: string; data?: Array<{ old_owner_id?: string; new_owner_id?: string; amount?: string }> };
+      try {
+        event = JSON.parse(line.slice("EVENT_JSON:".length)) as typeof event;
+      } catch {
+        continue;
+      }
+      if (event.event !== "ft_transfer" || !Array.isArray(event.data)) continue;
+      for (const row of event.data) {
+        const index = logIndex;
+        logIndex += 1;
+        if (row.old_owner_id !== from || row.new_owner_id !== to || !row.amount || row.amount === "0") continue;
+        found.push({ from, to, amount: row.amount, logIndex: index });
+      }
+    }
+  }
+  return found;
+}
+
 export function paymentsFromOutcome(outcome: TxOutcome, escrow: string): ParsedPayment[] {
   if (outcomeFailed(outcome)) return [];
   const found: ParsedPayment[] = [];
@@ -201,6 +236,46 @@ export function listEscrow(db: Db, email: string): {
     outgoing: outgoing.map(toRow),
     history: history.map(toRow),
   };
+}
+
+/** A direct wallet-to-wallet payment. It is already settled, so it belongs in history. */
+export function recordDirectPayments(
+  db: Db,
+  rows: Array<{
+    recipientEmail: string;
+    senderEmail: string;
+    senderAddress: string;
+    amount: string;
+    txHash: string;
+    logIndex: number;
+  }>,
+): number {
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO escrow_deposits
+      (recipient_email, email_hash, sender_email, sender_address, amount, tx_hash, log_index, created_at, claimed_at, claim_tx)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const createdAt = new Date().toISOString();
+  let count = 0;
+  const write = db.transaction(() => {
+    for (const row of rows) {
+      const info = insert.run(
+        row.recipientEmail,
+        emailHash(row.recipientEmail),
+        row.senderEmail,
+        row.senderAddress,
+        row.amount,
+        row.txHash,
+        row.logIndex,
+        createdAt,
+        createdAt,
+        row.txHash,
+      );
+      count += info.changes;
+    }
+  });
+  write();
+  return count;
 }
 
 export function markClaimed(db: Db, email: string, claimTx: string): void {

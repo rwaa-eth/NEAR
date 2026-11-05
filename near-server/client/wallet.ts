@@ -30,6 +30,7 @@ type EscrowRow = {
   createdAt: string;
   unlockAt: string | null;
   reclaimable: boolean;
+  claimedAt?: string | null;
 };
 
 type Detected =
@@ -363,6 +364,64 @@ function unlockLabel(row: EscrowRow): string {
   return `pull-back in ${days} day${days === 1 ? "" : "s"}`;
 }
 
+function historyInstant(row: EscrowRow): Date | null {
+  const parsed = Date.parse(row.claimedAt || row.createdAt);
+  return Number.isNaN(parsed) ? null : new Date(parsed);
+}
+
+function dayLabel(date: Date): string {
+  const today = new Date();
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const days = Math.round((todayStart - start) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  const sameYear = date.getFullYear() === today.getFullYear();
+  return date.toLocaleDateString(undefined, sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
+}
+
+function renderHistory(rows: EscrowRow[]): void {
+  historyList.replaceChildren();
+  if (rows.length === 0) {
+    const item = document.createElement("li");
+    item.textContent = "No payments yet.";
+    historyList.append(item);
+    return;
+  }
+  let shownDay = "";
+  for (const row of rows) {
+    const when = historyInstant(row);
+    const key = when ? `${when.getFullYear()}-${when.getMonth()}-${when.getDate()}` : "";
+    if (key !== shownDay) {
+      shownDay = key;
+      const head = document.createElement("li");
+      head.className = "day";
+      head.textContent = when ? dayLabel(when) : "Undated";
+      historyList.append(head);
+    }
+    const item = document.createElement("li");
+    if (when) {
+      const time = document.createElement("time");
+      time.className = "when";
+      time.dateTime = when.toISOString();
+      time.textContent = when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      item.append(time);
+    }
+    const text = document.createElement("span");
+    text.textContent = `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
+    item.append(text);
+    if (row.txHash) {
+      const link = document.createElement("a");
+      link.href = `${explorerBase()}/txns/${row.txHash}`;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = " tx";
+      item.append(link);
+    }
+    historyList.append(item);
+  }
+}
+
 function renderRows(
   list: HTMLElement,
   rows: EscrowRow[],
@@ -421,12 +480,7 @@ async function loadEscrow(): Promise<void> {
   renderRows(incomingList, result.incoming, "", (row) => {
     return `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
   });
-  renderRows(
-    historyList,
-    result.history,
-    "No collected payments yet.",
-    (row) => `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`,
-  );
+  renderHistory(result.history);
   outgoingSection.hidden = result.outgoing.length === 0;
   if (result.outgoing.length > 0) {
     renderRows(
@@ -666,7 +720,7 @@ async function resolveRecipient(): Promise<void> {
     : config.escrow
       ? "Not registered. A send is held until they open a wallet and collect it."
       : "Not registered. Escrow is not configured on this server.";
-  setSendEnabled(Boolean(config.token && config.escrow));
+  setSendEnabled(Boolean(config.token && (account.registered || config.escrow)));
 }
 
 async function confirmSendPasskey(): Promise<void> {
@@ -691,26 +745,48 @@ async function sendToken(): Promise<void> {
     await confirmSendPasskey();
     const account = await nearAccount();
     if (detected.kind === "email") {
-      if (!config.token || !config.escrow) throw new Error("Set NEAR_TOKEN_ACCOUNT and NEAR_ESCROW_ACCOUNT on the server.");
-      const outcome = await account.functionCall({
-        contractId: config.token,
-        methodName: "ft_transfer_call",
-        args: {
-          receiver_id: config.escrow,
-          amount: amount.toString(),
-          memo: null,
-          msg: emailHash(detected.email),
-        },
-        gas: CALL_GAS,
-        attachedDeposit: 1n,
-      });
-      const hash = outcome.transaction.hash;
-      await api("/ethw/api/escrow/deposit", {
-        senderEmail: current.email,
-        recipientEmail: detected.email,
-        txHash: hash,
-      });
-      setStatus(`Held for ${detected.email}. ${hash}`);
+      if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
+      const recipient = await api<{ registered: boolean; accountId?: string }>(
+        `/ethw/api/account?email=${encodeURIComponent(detected.email)}`,
+      );
+      if (recipient.registered && recipient.accountId) {
+        if (recipient.accountId === current.accountId) throw new Error("Choose a different recipient.");
+        const outcome = await account.functionCall({
+          contractId: config.token,
+          methodName: "ft_transfer",
+          args: { receiver_id: recipient.accountId, amount: amount.toString(), memo: null },
+          gas: TRANSFER_GAS,
+          attachedDeposit: 1n,
+        });
+        const hash = outcome.transaction.hash;
+        await api("/ethw/api/transfer", {
+          senderEmail: current.email,
+          recipientEmail: detected.email,
+          txHash: hash,
+        });
+        setStatus(`Sent to ${detected.email}. ${hash}`);
+      } else {
+        if (!config.escrow) throw new Error("Set NEAR_ESCROW_ACCOUNT on the server.");
+        const outcome = await account.functionCall({
+          contractId: config.token,
+          methodName: "ft_transfer_call",
+          args: {
+            receiver_id: config.escrow,
+            amount: amount.toString(),
+            memo: null,
+            msg: emailHash(detected.email),
+          },
+          gas: CALL_GAS,
+          attachedDeposit: 1n,
+        });
+        const hash = outcome.transaction.hash;
+        await api("/ethw/api/escrow/deposit", {
+          senderEmail: current.email,
+          recipientEmail: detected.email,
+          txHash: hash,
+        });
+        setStatus(`Held for ${detected.email}. ${hash}`);
+      }
     } else if (detected.kind === "near") {
       if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
       const outcome = await account.functionCall({
