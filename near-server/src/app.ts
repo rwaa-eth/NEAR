@@ -301,6 +301,7 @@ function isPublic(request: FastifyRequest): boolean {
     url === "/ethw" ||
     url === "/wallet.js" ||
     url === "/ragraphic.jpg" ||
+    url === "/copyicon.png" ||
     url.startsWith("/ethw/")
   );
 }

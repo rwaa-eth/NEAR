@@ -211,4 +211,45 @@ describe("NEAR escrow records", () => {
     assert.equal(stillThere.json().incoming.length, 1);
     await app.close();
   });
+
+  it("records a payment back when the recipient is an account id", async () => {
+    const { app } = appWith();
+    const ada = await registerVerified(app, "ada@example.com");
+    const friend = await registerVerified(app, "friend@example.com");
+    const hash = "Hash44444444444444444444444444444444";
+    const log = `EVENT_JSON:${JSON.stringify({
+      standard: "nep141",
+      version: "1.0.0",
+      event: "ft_transfer",
+      data: [{ old_owner_id: friend, new_owner_id: ada, amount: "1000000" }],
+    })}`;
+    const tx: TxOutcome = {
+      status: { SuccessValue: "" },
+      transaction: { signer_id: friend, hash },
+      receipts_outcome: [
+        { outcome: { executor_id: "token.testnet", logs: [log], status: { SuccessValue: "" } } },
+      ],
+    };
+    const original = global.fetch;
+    global.fetch = async () =>
+      new Response(JSON.stringify({ result: tx }), { status: 200, headers: { "content-type": "application/json" } });
+    try {
+      const recorded = await app.inject({
+        method: "POST",
+        url: "/ethw/api/transfer",
+        payload: { senderEmail: "friend@example.com", recipientAccountId: ada, txHash: hash },
+      });
+      assert.equal(recorded.statusCode, 200, recorded.body);
+      assert.equal(recorded.json().history[0].direction, "out");
+      assert.equal(recorded.json().history[0].amount, "1000000");
+      assert.equal(recorded.json().history[0].recipientEmail, "ada@example.com");
+      const incoming = await app.inject({ method: "GET", url: "/ethw/api/escrow?email=ada@example.com" });
+      assert.equal(incoming.json().history[0].direction, "in");
+      assert.equal(incoming.json().history[0].amount, "1000000");
+      assert.equal(incoming.json().history[0].senderEmail, "friend@example.com");
+    } finally {
+      global.fetch = original;
+      await app.close();
+    }
+  });
 });

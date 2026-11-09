@@ -8,6 +8,7 @@
     "build": "tsc && npm run build:wallet",
     "build:wallet": "esbuild client/wallet.ts --bundle --format=esm --platform=browser --outfile=public/wallet.js --external:near-api-js",
     "start": "node dist/index.js",
+    "fund": "tsx script/fund-usdt.ts",
     "test": "tsx --test test/accountId.test.ts test/geo.test.ts test/api.test.ts test/ethw.test.ts test/escrow.test.ts test/otp.test.ts test/payee.test.ts test/config.test.ts"
   },
   "dependencies": {

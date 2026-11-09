@@ -13335,6 +13335,7 @@ var require_wallet = __commonJS({
           }
         } else if (detected.kind === "near") {
           if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
+          if (detected.accountId === current.accountId) throw new Error("Choose a different recipient.");
           const outcome = await account.functionCall({
             contractId: config.token,
             methodName: "ft_transfer",
@@ -13342,7 +13343,13 @@ var require_wallet = __commonJS({
             gas: TRANSFER_GAS,
             attachedDeposit: 1n
           });
-          setStatus(`Sent. ${outcome.transaction.hash}`);
+          const hash = outcome.transaction.hash;
+          await api("/ethw/api/transfer", {
+            senderEmail: current.email,
+            recipientAccountId: detected.accountId,
+            txHash: hash
+          });
+          setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.accountId}. ${hash}`);
         } else {
           throw new Error("Choose an email or a NEAR account.");
         }

@@ -37,11 +37,28 @@ const otpVerifyBody = z.object({
   code: z.string().trim().regex(/^\d{6}$/),
 });
 
+const nearAccountId = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^(?:[a-z0-9][a-z0-9._-]{0,62}\.(?:near|testnet)|[0-9a-f]{64})$/);
+
 const depositBody = z.object({
   senderEmail: email,
   recipientEmail: email,
   txHash,
 });
+
+const transferBody = z
+  .object({
+    senderEmail: email,
+    recipientEmail: email.optional(),
+    recipientAccountId: nearAccountId.optional(),
+    txHash,
+  })
+  .refine((body) => Boolean(body.recipientEmail || body.recipientAccountId), {
+    message: "Choose a recipient.",
+  });
 
 const releaseBody = z.object({ email });
 const reclaimBody = z.object({
@@ -70,10 +87,7 @@ function statusError(statusCode: number, message: string): Error {
   return error;
 }
 
-function readAccount(db: Db, accountEmail: string): NearAccount | undefined {
-  const row = db
-    .prepare("SELECT email, account_id, public_key, created_at FROM near_accounts WHERE email = ?")
-    .get(accountEmail) as AccountRow | undefined;
+function accountFromRow(row: AccountRow | undefined): NearAccount | undefined {
   if (!row) return undefined;
   return {
     email: row.email,
@@ -81,6 +95,20 @@ function readAccount(db: Db, accountEmail: string): NearAccount | undefined {
     publicKey: row.public_key,
     createdAt: row.created_at,
   };
+}
+
+function readAccount(db: Db, accountEmail: string): NearAccount | undefined {
+  const row = db
+    .prepare("SELECT email, account_id, public_key, created_at FROM near_accounts WHERE email = ?")
+    .get(accountEmail) as AccountRow | undefined;
+  return accountFromRow(row);
+}
+
+function readAccountById(db: Db, accountId: string): NearAccount | undefined {
+  const row = db
+    .prepare("SELECT email, account_id, public_key, created_at FROM near_accounts WHERE account_id = ?")
+    .get(accountId) as AccountRow | undefined;
+  return accountFromRow(row);
 }
 
 export function registerNearWallet(app: FastifyInstance, config: Config, db: Db): void {
@@ -94,6 +122,11 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
   app.get("/ragraphic.jpg", async (_request, reply) => {
     const image = fs.readFileSync(path.join(__dirname, "..", "public", "ragraphic.jpg"));
     return reply.type("image/jpeg").send(image);
+  });
+
+  app.get("/copyicon.png", async (_request, reply) => {
+    const image = fs.readFileSync(path.join(__dirname, "..", "public", "copyicon.png"));
+    return reply.type("image/png").send(image);
   });
 
   app.get("/ethw/api/config", async () => ({
@@ -210,12 +243,18 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
 
   app.post("/ethw/api/transfer", async (request) => {
     if (!config.tokenAccount) throw statusError(400, "Set NEAR_TOKEN_ACCOUNT on the server");
-    const body = depositBody.parse(request.body);
-    if (body.senderEmail === body.recipientEmail) throw statusError(400, "Choose a different recipient.");
+    const body = transferBody.parse(request.body);
     const sender = readAccount(db, body.senderEmail);
     if (!sender) throw statusError(404, "sender email is not registered");
-    const recipient = readAccount(db, body.recipientEmail);
-    if (!recipient) throw statusError(404, "recipient email is not registered");
+    const registered = body.recipientEmail
+      ? readAccount(db, body.recipientEmail)
+      : readAccountById(db, body.recipientAccountId ?? "");
+    if (body.recipientEmail && !registered) throw statusError(404, "recipient email is not registered");
+    const recipientAccountId = registered?.accountId ?? body.recipientAccountId ?? "";
+    const recipientLabel = registered?.email ?? recipientAccountId;
+    if (!recipientAccountId || recipientAccountId === sender.accountId || recipientLabel === sender.email) {
+      throw statusError(400, "Choose a different recipient.");
+    }
     let outcome;
     try {
       outcome = await fetchTx(config.nearRpcUrl, body.txHash, sender.accountId);
@@ -225,12 +264,12 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
     if (outcome.transaction?.signer_id !== sender.accountId) {
       throw statusError(400, "that transaction was not signed by this wallet");
     }
-    const parsed = transfersFromOutcome(outcome, config.tokenAccount, sender.accountId, recipient.accountId);
+    const parsed = transfersFromOutcome(outcome, config.tokenAccount, sender.accountId, recipientAccountId);
     if (parsed.length === 0) throw statusError(400, "that transaction does not pay this account");
     recordDirectPayments(
       db,
       parsed.map((transfer) => ({
-        recipientEmail: recipient.email,
+        recipientEmail: recipientLabel,
         senderEmail: sender.email,
         senderAddress: sender.accountId,
         amount: transfer.amount,

@@ -3,6 +3,7 @@ import { keccak_256 } from "@noble/hashes/sha3";
 import type { Config } from "./config";
 
 const RELEASE_GAS = 100_000_000_000_000n;
+const MINT_GAS = 100_000_000_000_000n;
 const STORAGE_GAS = 30_000_000_000_000n;
 /** Minimum NEP-145 storage for this token. `storage_balance_bounds.min`. */
 const TOKEN_STORAGE_DEPOSIT = 1_250_000_000_000_000_000_000n;
@@ -138,6 +139,21 @@ export async function ensureTokenStorage(config: Config, accountId: string): Pro
     args: { account_id: accountId, registration_only: true },
     gas: STORAGE_GAS,
     attachedDeposit: TOKEN_STORAGE_DEPOSIT,
+  });
+}
+
+/** Mint test USDT. Only the token owner key can call this. `amount` is base units. */
+export async function mintToken(config: Config, accountId: string, amount: string): Promise<TxOutcome> {
+  if (!config.tokenAccount || !config.operatorAccount || !config.operatorKey) {
+    throw new Error("Set NEAR_TOKEN_ACCOUNT, NEAR_OPERATOR_ACCOUNT, and NEAR_OPERATOR_KEY");
+  }
+  const signer = await operatorSigner(config);
+  return signer.functionCall({
+    contractId: config.tokenAccount,
+    methodName: "mint",
+    args: { account_id: accountId, amount },
+    gas: MINT_GAS,
+    attachedDeposit: 0n,
   });
 }
 
