@@ -12,6 +12,7 @@ function testApp() {
     ...process.env,
     STATIC_API_TOKEN: "test-token",
     SQLITE_PATH: ":memory:",
+    NEAR_NETWORK: "testnet",
     NEAR_PROVISION_ACCOUNTS: "false",
     NEAR_TOKEN_ACCOUNT: "token.testnet",
     NEAR_TOKEN_SYMBOL: "USDT",
@@ -46,7 +47,9 @@ describe("NEAR wallet", () => {
     assert.equal(legacy.headers.location, "/");
     assert.match(page.body, /RaOpenwallet/);
     assert.match(page.body, /\/wallet\.js/);
+    assert.match(page.body, /id="network-label"/);
     assert.match(page.body, /NEAR testnet/);
+    assert.match(page.body, /id="scan-address"/);
     assert.match(page.body, /To collect/);
     assert.match(page.body, /Waiting for collection/);
     const config = await app.inject({ method: "GET", url: "/ethw/api/config" });
@@ -58,6 +61,7 @@ describe("NEAR wallet", () => {
     const sendPage = await app.inject({ method: "GET", url: "/send" });
     assert.equal(sendPage.statusCode, 200);
     assert.match(sendPage.body, /NEAR account/);
+    assert.match(sendPage.body, /id="scan-modal"/);
     await app.close();
   });
 

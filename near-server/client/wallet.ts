@@ -1,6 +1,7 @@
 import { keccak_256 } from "@noble/hashes/sha3";
 import { connect, keyStores, KeyPair } from "near-api-js";
 import QRCode from "qrcode";
+import { mountAddressScanner } from "./scan";
 
 type Config = {
   network: string;
@@ -93,6 +94,7 @@ const historyList = document.querySelector<HTMLElement>("#history")!;
 const outgoingSection = document.querySelector<HTMLElement>("#outgoing-section")!;
 const outgoingList = document.querySelector<HTMLElement>("#outgoing")!;
 const gasEl = document.querySelector<HTMLElement>("#gas")!;
+const networkLabel = document.querySelector<HTMLElement>("#network-label")!;
 const recipientInput = document.querySelector<HTMLInputElement>("#recipient")!;
 const recipientAvatar = document.querySelector<HTMLImageElement>("#recipient-avatar")!;
 const kindChip = document.querySelector<HTMLElement>("#kind-chip")!;
@@ -282,6 +284,12 @@ function parseAmount(text: string, decimals: number): bigint {
 
 function explorerBase(): string {
   return config.network === "mainnet" ? "https://nearblocks.io" : "https://testnet.nearblocks.io";
+}
+
+function applyNetwork(): void {
+  const mainnet = config.network === "mainnet";
+  networkLabel.textContent = mainnet ? "NEAR mainnet" : "NEAR testnet";
+  recipientInput.placeholder = mainnet ? "email, +phone, or name.near" : "email, +phone, or name.testnet";
 }
 
 function pathIsSend(): boolean {
@@ -799,7 +807,7 @@ async function sendToken(): Promise<void> {
           recipientEmail: detected.email,
           txHash: hash,
         });
-        setStatus(`Sent to ${detected.email}. ${hash}`);
+        setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.email}. ${hash}`);
       } else {
         if (!config.escrow) throw new Error("Set NEAR_ESCROW_ACCOUNT on the server.");
         const outcome = await account.functionCall({
@@ -948,10 +956,16 @@ recipientInput.addEventListener("input", () => {
 sendButton.addEventListener("click", () => {
   sendToken().catch((error: unknown) => setStatus(explain(error)));
 });
+mountAddressScanner((payee) => {
+  recipientInput.value = payee;
+  recipientInput.dispatchEvent(new Event("input"));
+  setStatus("Address scanned.");
+});
 
 void api<Config>("/ethw/api/config")
   .then(async (loaded) => {
     config = loaded;
+    applyNetwork();
     tokenLabel.textContent = config.symbol;
     syncSetupButtons();
     if (!config.mailReady) {

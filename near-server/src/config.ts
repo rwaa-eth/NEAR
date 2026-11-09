@@ -7,7 +7,7 @@ export interface Config {
   sqlitePath: string;
   packageName: string;
   fingerprints: string[];
-  nearNetwork: string;
+  nearNetwork: "mainnet" | "testnet";
   nearRpcUrl: string;
   faucetUrl: string;
   provisionAccounts: boolean;
@@ -25,6 +25,14 @@ export interface Config {
   emailDevMode: boolean;
 }
 
+function walletNetwork(value: string | undefined): "mainnet" | "testnet" {
+  const network = (value ?? "").trim().toLowerCase() || "testnet";
+  if (network !== "mainnet" && network !== "testnet") {
+    throw new Error("NEAR_NETWORK must be mainnet or testnet");
+  }
+  return network;
+}
+
 function androidOrigin(fingerprint: string): string {
   const raw = Buffer.from(fingerprint.replace(/:/g, ""), "hex");
   if (raw.length !== 32) throw new Error(`SHA256_CERT_FINGERPRINT must be 32 bytes: ${fingerprint}`);
@@ -39,6 +47,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .filter(Boolean);
   const origins = [origin, ...fingerprints.map(androidOrigin)];
   const decimals = Number(env.NEAR_TOKEN_DECIMALS ?? 6);
+  const nearNetwork = walletNetwork(env.NEAR_NETWORK);
+  const nearRpcUrl =
+    (env.NEAR_RPC_URL ?? "").trim() ||
+    (nearNetwork === "mainnet" ? "https://rpc.mainnet.near.org" : "https://rpc.testnet.near.org");
   return {
     port: Number(env.PORT ?? 8099),
     token: env.STATIC_API_TOKEN ?? "dev-token-change-me",
@@ -48,8 +60,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sqlitePath: env.SQLITE_PATH ?? "data/rwaa.sqlite",
     packageName: env.PACKAGE_NAME ?? "one.percolate.maplogger",
     fingerprints,
-    nearNetwork: env.NEAR_NETWORK ?? "testnet",
-    nearRpcUrl: env.NEAR_RPC_URL ?? "https://rpc.testnet.near.org",
+    nearNetwork,
+    nearRpcUrl,
     faucetUrl: env.NEAR_FAUCET_URL ?? "https://helper.nearprotocol.com/account",
     provisionAccounts: env.NEAR_PROVISION_ACCOUNTS !== "false" && env.NEAR_PROVISION_ACCOUNTS !== "0",
     relayerAccount: env.NEAR_RELAYER_ACCOUNT ?? "",

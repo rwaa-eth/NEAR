@@ -577,6 +577,55 @@
       background: #e8dccb;
       flex: none;
     }
+    .recipient-field input { flex: 1; min-width: 0; width: auto; }
+    .scan-btn {
+      flex: none;
+      margin: 0;
+      padding: 0.45rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(224, 138, 43, 0.12);
+      color: var(--amber-deep);
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .scan-btn:hover { background: rgba(224, 138, 43, 0.2); }
+    .scan-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      background: rgba(26, 20, 15, 0.55);
+    }
+    .scan-modal[hidden] { display: none !important; }
+    .scan-card {
+      width: min(24rem, 100%);
+      padding: 1rem;
+      border-radius: 1.4rem;
+      background: #fffaf3;
+      box-shadow: 0 24px 60px rgba(26, 20, 15, 0.28);
+    }
+    .scan-card h2 {
+      margin: 0 0 0.75rem;
+      font-family: Syne, Manrope, sans-serif;
+      font-size: 1.35rem;
+      letter-spacing: -0.03em;
+    }
+    .scan-card video {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      border-radius: 1rem;
+      background: #1a140f;
+    }
+    .scan-card .muted { margin: 0.7rem 0 0; }
+    .scan-actions { display: flex; gap: 0.55rem; margin-top: 0.85rem; }
     .kind-chip {
       display: inline-flex;
       align-items: center;
@@ -665,7 +714,7 @@
 
     <section id="wallet" class="view" hidden>
       <div class="panel">
-        <p class="hero-copy"><strong>Your wallet</strong> on NEAR testnet. Share the QR to receive.</p>
+        <p class="hero-copy"><strong>Your wallet</strong> on <span id="network-label">NEAR testnet</span>. Share the QR to receive.</p>
         <div class="balances">
           <div class="balance-row"><span>NEAR</span><strong id="eth"><span class="amount-spin" aria-label="Loading NEAR balance"></span></strong></div>
           <div class="balance-row"><span id="token-label">USDT</span><strong id="token"><span class="amount-spin" aria-label="Loading USDT balance"></span></strong></div>
@@ -721,12 +770,13 @@
         <h2>Send</h2>
       </div>
       <div class="panel">
-        <p class="hero-copy">Pay anyone with an email or a NEAR account.</p>
+        <p class="hero-copy">Pay anyone with an email or a NEAR account. Scan a QR code to fill the address.</p>
         <p id="gas" class="muted"></p>
         <label>To
           <span class="recipient-field">
             <img id="recipient-avatar" width="38" height="38" alt="" hidden>
             <input id="recipient" autocomplete="off" placeholder="email, +phone, or name.testnet">
+            <button id="scan-address" class="scan-btn" type="button">Scan</button>
           </span>
         </label>
         <div id="kind-chip" class="kind-chip" data-kind="empty">Recipient</div>
@@ -747,6 +797,19 @@
 
   <div id="send-dock" class="send-dock" hidden>
     <button id="open-send" class="btn-send" type="button">Send</button>
+  </div>
+
+  <div id="scan-modal" class="scan-modal" hidden>
+    <div class="scan-card" role="dialog" aria-modal="true" aria-labelledby="scan-title">
+      <h2 id="scan-title">Scan address</h2>
+      <video id="scan-video" playsinline muted autoplay></video>
+      <p id="scan-note" class="muted">Point the camera at a wallet QR code. The picture stays on this device.</p>
+      <div class="scan-actions">
+        <button id="scan-file-btn" class="btn btn-ghost" type="button">Choose image</button>
+        <button id="scan-close" class="btn btn-ghost" type="button">Close</button>
+      </div>
+      <input id="scan-file" type="file" accept="image/*" hidden>
+    </div>
   </div>
 
   <script type="importmap">
