@@ -233,62 +233,86 @@ function base64UrlToBytes(value: string): Uint8Array {
   return bytes;
 }
 
-function isPasskeyCancel(error: unknown): boolean {
-  return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
-}
-
 function isTransientPasskey(error: unknown): boolean {
   const message = error instanceof Error ? error.message : "";
   return /transient reason/i.test(message);
 }
 
+function isPasskeyCancel(error: unknown): boolean {
+  if (isTransientPasskey(error)) return false;
+  return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
+}
+
+let passkeyQueue: Promise<unknown> = Promise.resolve();
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/** Windows Hello often rejects one prompt, then accepts the same request a moment later. */
+async function withPasskeyRetry<T>(run: () => Promise<T>): Promise<T> {
+  const next = passkeyQueue.then(async () => {
+    const pauses = [0, 400];
+    for (let attempt = 0; attempt < pauses.length; attempt += 1) {
+      if (pauses[attempt] > 0) {
+        setStatus("Passkey didn't respond. Trying again.");
+        await pause(pauses[attempt]);
+      }
+      try {
+        return await run();
+      } catch (error) {
+        if (!isTransientPasskey(error) || attempt === pauses.length - 1) throw error;
+      }
+    }
+    throw new Error("Passkey didn't respond.");
+  });
+  passkeyQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
 async function createPasskey(email: string): Promise<string> {
   if (!window.PublicKeyCredential) throw new Error("This browser cannot create a passkey.");
   const userId = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email)));
-  const credential = await navigator.credentials.create({
-    publicKey: {
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp: { name: "RaOpenwallet", id: window.location.hostname },
-      user: { id: userId, name: email, displayName: email },
-      pubKeyCredParams: [
-        { type: "public-key", alg: -7 },
-        { type: "public-key", alg: -257 },
-      ],
-      authenticatorSelection: {
-        residentKey: "required",
-        requireResidentKey: true,
-        userVerification: "required",
+  return withPasskeyRetry(async () => {
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: { name: "RaOpenwallet", id: window.location.hostname },
+        user: { id: userId, name: email, displayName: email },
+        pubKeyCredParams: [
+          { type: "public-key", alg: -7 },
+          { type: "public-key", alg: -257 },
+        ],
+        authenticatorSelection: {
+          residentKey: "required",
+          requireResidentKey: true,
+          userVerification: "required",
+        },
+        timeout: 60_000,
+        attestation: "none",
       },
-      timeout: 60_000,
-      attestation: "none",
-    },
+    });
+    if (!credential || credential.type !== "public-key") throw new Error("Passkey setup was cancelled.");
+    return bytesToBase64Url(new Uint8Array((credential as PublicKeyCredential).rawId));
   });
-  if (!credential || credential.type !== "public-key") throw new Error("Passkey setup was cancelled.");
-  return bytesToBase64Url(new Uint8Array((credential as PublicKeyCredential).rawId));
 }
 
 async function assertPasskey(credentialId: string): Promise<void> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) as BufferSource }],
-          userVerification: "required",
-          timeout: 60_000,
-        },
-      });
-      if (!assertion) throw new Error("Passkey sign-in was cancelled.");
-      return;
-    } catch (error) {
-      if (attempt === 0 && isTransientPasskey(error)) {
-        setStatus("Passkey didn't respond. Trying again.");
-        await new Promise((resolve) => window.setTimeout(resolve, 400));
-        continue;
-      }
-      throw error;
-    }
-  }
+  await withPasskeyRetry(async () => {
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rpId: window.location.hostname,
+        allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) as BufferSource }],
+        userVerification: "required",
+        timeout: 60_000,
+      },
+    });
+    if (!assertion) throw new Error("Passkey sign-in was cancelled.");
+  });
 }
 
 function emailHash(email: string): string {
@@ -867,6 +891,24 @@ function moveSuggestion(direction: 1 | -1): void {
   items[suggestIndex].scrollIntoView({ block: "nearest" });
 }
 
+function emailSendNotice(email: string, escrowed: boolean, amountText: string): void {
+  if (!current) return;
+  const subject = `Sending you ${amountText} ${config.symbol}`;
+  const lead = escrowed
+    ? `I'm sending you ${amountText} ${config.symbol}. It is held in escrow until you collect it.`
+    : `I'm sending you ${amountText} ${config.symbol}.`;
+  const next = escrowed
+    ? `Create a wallet at ${window.location.origin} using ${email}, then collect it.`
+    : `Open your wallet at ${window.location.origin} to see it.`;
+  const body = [lead, "", next, "", `This is from ${current.email} (${current.accountId}).`].join("\n");
+  const link = document.createElement("a");
+  link.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
 function setSendEnabled(enabled: boolean, label = "Send"): void {
   sendButton.disabled = !enabled;
   sendButton.textContent = label;
@@ -970,7 +1012,9 @@ async function sendToken(): Promise<void> {
           txHash: hash,
         });
         rememberSentEmail(detected.email);
-        setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.email}. ${hash}`);
+        const sentLabel = formatAmount(amount.toString(), config.decimals);
+        setStatus(`Sent ${sentLabel} ${config.symbol} to ${detected.email}. ${hash}`);
+        emailSendNotice(detected.email, false, sentLabel);
       } else {
         if (!config.escrow) throw new Error("Set NEAR_ESCROW_ACCOUNT on the server.");
         const outcome = await account.functionCall({
@@ -992,7 +1036,9 @@ async function sendToken(): Promise<void> {
           txHash: hash,
         });
         rememberSentEmail(detected.email);
+        const heldLabel = formatAmount(amount.toString(), config.decimals);
         setStatus(`Held for ${detected.email}. ${hash}`);
+        emailSendNotice(detected.email, true, heldLabel);
       }
     } else if (detected.kind === "near") {
       if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
@@ -1175,7 +1221,8 @@ void api<Config>("/ethw/api/config")
     const saved = window.localStorage.getItem(EMAIL_KEY);
     if (saved) {
       emailInput.value = saved;
-      await openWallet();
+      syncSetupButtons();
+      setStatus("Press Open wallet to sign in.");
     }
   })
   .catch((error: unknown) => setStatus(explain(error)));

@@ -12788,59 +12788,79 @@ var require_wallet = __commonJS({
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
       return bytes;
     }
-    function isPasskeyCancel(error) {
-      return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
-    }
     function isTransientPasskey(error) {
       const message = error instanceof Error ? error.message : "";
       return /transient reason/i.test(message);
     }
+    function isPasskeyCancel(error) {
+      if (isTransientPasskey(error)) return false;
+      return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
+    }
+    var passkeyQueue = Promise.resolve();
+    function pause(ms) {
+      return new Promise((resolve) => window.setTimeout(resolve, ms));
+    }
+    async function withPasskeyRetry(run) {
+      const next = passkeyQueue.then(async () => {
+        const pauses = [0, 400];
+        for (let attempt = 0; attempt < pauses.length; attempt += 1) {
+          if (pauses[attempt] > 0) {
+            setStatus("Passkey didn't respond. Trying again.");
+            await pause(pauses[attempt]);
+          }
+          try {
+            return await run();
+          } catch (error) {
+            if (!isTransientPasskey(error) || attempt === pauses.length - 1) throw error;
+          }
+        }
+        throw new Error("Passkey didn't respond.");
+      });
+      passkeyQueue = next.then(
+        () => void 0,
+        () => void 0
+      );
+      return next;
+    }
     async function createPasskey(email) {
       if (!window.PublicKeyCredential) throw new Error("This browser cannot create a passkey.");
       const userId = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email)));
-      const credential = await navigator.credentials.create({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          rp: { name: "RaOpenwallet", id: window.location.hostname },
-          user: { id: userId, name: email, displayName: email },
-          pubKeyCredParams: [
-            { type: "public-key", alg: -7 },
-            { type: "public-key", alg: -257 }
-          ],
-          authenticatorSelection: {
-            residentKey: "required",
-            requireResidentKey: true,
-            userVerification: "required"
-          },
-          timeout: 6e4,
-          attestation: "none"
-        }
+      return withPasskeyRetry(async () => {
+        const credential = await navigator.credentials.create({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            rp: { name: "RaOpenwallet", id: window.location.hostname },
+            user: { id: userId, name: email, displayName: email },
+            pubKeyCredParams: [
+              { type: "public-key", alg: -7 },
+              { type: "public-key", alg: -257 }
+            ],
+            authenticatorSelection: {
+              residentKey: "required",
+              requireResidentKey: true,
+              userVerification: "required"
+            },
+            timeout: 6e4,
+            attestation: "none"
+          }
+        });
+        if (!credential || credential.type !== "public-key") throw new Error("Passkey setup was cancelled.");
+        return bytesToBase64Url(new Uint8Array(credential.rawId));
       });
-      if (!credential || credential.type !== "public-key") throw new Error("Passkey setup was cancelled.");
-      return bytesToBase64Url(new Uint8Array(credential.rawId));
     }
     async function assertPasskey(credentialId) {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          const assertion = await navigator.credentials.get({
-            publicKey: {
-              challenge: crypto.getRandomValues(new Uint8Array(32)),
-              allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) }],
-              userVerification: "required",
-              timeout: 6e4
-            }
-          });
-          if (!assertion) throw new Error("Passkey sign-in was cancelled.");
-          return;
-        } catch (error) {
-          if (attempt === 0 && isTransientPasskey(error)) {
-            setStatus("Passkey didn't respond. Trying again.");
-            await new Promise((resolve) => window.setTimeout(resolve, 400));
-            continue;
+      await withPasskeyRetry(async () => {
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            rpId: window.location.hostname,
+            allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) }],
+            userVerification: "required",
+            timeout: 6e4
           }
-          throw error;
-        }
-      }
+        });
+        if (!assertion) throw new Error("Passkey sign-in was cancelled.");
+      });
     }
     function emailHash(email) {
       const digest = keccak_256(new TextEncoder().encode(email.trim().toLowerCase()));
@@ -13365,6 +13385,19 @@ var require_wallet = __commonJS({
       items.forEach((item, index) => item.classList.toggle("active", index === suggestIndex));
       items[suggestIndex].scrollIntoView({ block: "nearest" });
     }
+    function emailSendNotice(email, escrowed, amountText) {
+      if (!current) return;
+      const subject = `Sending you ${amountText} ${config.symbol}`;
+      const lead = escrowed ? `I'm sending you ${amountText} ${config.symbol}. It is held in escrow until you collect it.` : `I'm sending you ${amountText} ${config.symbol}.`;
+      const next = escrowed ? `Create a wallet at ${window.location.origin} using ${email}, then collect it.` : `Open your wallet at ${window.location.origin} to see it.`;
+      const body = [lead, "", next, "", `This is from ${current.email} (${current.accountId}).`].join("\n");
+      const link = document.createElement("a");
+      link.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      link.hidden = true;
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }
     function setSendEnabled(enabled, label = "Send") {
       sendButton.disabled = !enabled;
       sendButton.textContent = label;
@@ -13460,7 +13493,9 @@ var require_wallet = __commonJS({
               txHash: hash
             });
             rememberSentEmail(detected.email);
-            setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.email}. ${hash}`);
+            const sentLabel = formatAmount(amount.toString(), config.decimals);
+            setStatus(`Sent ${sentLabel} ${config.symbol} to ${detected.email}. ${hash}`);
+            emailSendNotice(detected.email, false, sentLabel);
           } else {
             if (!config.escrow) throw new Error("Set NEAR_ESCROW_ACCOUNT on the server.");
             const outcome = await account.functionCall({
@@ -13482,7 +13517,9 @@ var require_wallet = __commonJS({
               txHash: hash
             });
             rememberSentEmail(detected.email);
+            const heldLabel = formatAmount(amount.toString(), config.decimals);
             setStatus(`Held for ${detected.email}. ${hash}`);
+            emailSendNotice(detected.email, true, heldLabel);
           }
         } else if (detected.kind === "near") {
           if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
@@ -13660,7 +13697,8 @@ var require_wallet = __commonJS({
       const saved = window.localStorage.getItem(EMAIL_KEY);
       if (saved) {
         emailInput.value = saved;
-        await openWallet();
+        syncSetupButtons();
+        setStatus("Press Open wallet to sign in.");
       }
     }).catch((error) => setStatus(explain(error)));
   }
