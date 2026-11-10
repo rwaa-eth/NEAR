@@ -4,6 +4,7 @@ import { buildApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { openDatabase } from "../src/db";
 import { implicitAccountId } from "../src/near";
+import { normalizeSignupKey } from "../src/signupKey";
 
 const publicKey = "ed25519:11111111111111111111111111111111";
 
@@ -163,7 +164,8 @@ describe("NEAR wallet", () => {
     });
     assert.equal(issued.statusCode, 200, issued.body);
     assert.equal(issued.json().seq, 1);
-    assert.match(issued.json().code, /^1-/);
+    assert.match(issued.json().code, /^[A-Z]{8}$/);
+    assert.equal(normalizeSignupKey(`1-${issued.json().code.toLowerCase()}`), issued.json().code);
     const emailToken = await verifiedToken(app, "ada@example.com");
     const created = await app.inject({
       method: "POST",

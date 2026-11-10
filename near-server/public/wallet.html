@@ -462,6 +462,13 @@
       max-width: 16.5rem;
       margin-top: 0.35rem;
     }
+    .otp-slots.invite {
+      grid-template-columns: repeat(8, 1fr);
+      max-width: none;
+      gap: 0.3rem;
+    }
+    .otp-slots.invite .otp-digit { font-size: 1.2rem; }
+    .otp-field[hidden] { display: none !important; }
     .otp-digit {
       height: 2.7rem;
       border-bottom: 2px solid rgba(26, 20, 15, 0.18);
@@ -693,13 +700,13 @@
         <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
       </label>
       <div class="actions">
-        <button id="send-code" class="btn btn-primary" type="button" disabled>Send code</button>
+        <button id="send-code" class="btn btn-primary" type="button" disabled>Sign Up</button>
         <button id="open" class="btn btn-ghost" type="button" disabled>Open wallet</button>
       </div>
       <div id="otp-box" hidden>
         <div class="otp-field">
           <p>Verification code</p>
-          <div class="otp-slots">
+          <div id="otp-slots" class="otp-slots">
             <input id="otp" class="otp-capture" inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="6-digit verification code">
             <span class="otp-digit" aria-hidden="true"></span>
             <span class="otp-digit" aria-hidden="true"></span>
@@ -709,13 +716,24 @@
             <span class="otp-digit" aria-hidden="true"></span>
           </div>
         </div>
-        <label id="signup-key-field" hidden>Signup key
-          <input id="signup-key" autocomplete="off" spellcheck="false" placeholder="From your invitation">
-        </label>
+        <div id="signup-key-field" class="otp-field" hidden>
+          <p>Invite code</p>
+          <div id="signup-slots" class="otp-slots invite">
+            <input id="signup-key" class="otp-capture" autocomplete="off" spellcheck="false" maxlength="8" autocapitalize="characters" aria-label="8-letter invite code">
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+            <span class="otp-digit" aria-hidden="true"></span>
+          </div>
+        </div>
         <div class="actions">
-          <button id="use-signup-key" class="btn btn-primary" type="button" hidden>Create account</button>
+          <button id="use-signup-key" class="btn btn-primary" type="button" hidden>Create Account</button>
           <span id="creating-wrap" class="await-ring" hidden>
-            <button id="creating" class="btn btn-wait" type="button" disabled>Creating account</button>
+            <button id="creating" class="btn btn-wait" type="button" disabled>Creating Account</button>
           </span>
           <button id="retry-passkey" class="btn btn-ghost" type="button" hidden>Retry passkey</button>
         </div>

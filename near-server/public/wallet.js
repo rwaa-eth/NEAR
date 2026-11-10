@@ -12641,7 +12641,8 @@ var require_wallet = __commonJS({
     var signupKeyField = document.querySelector("#signup-key-field");
     var signupKeyInput = document.querySelector("#signup-key");
     var useSignupKeyButton = document.querySelector("#use-signup-key");
-    var otpDigits = [...document.querySelectorAll("#otp-box .otp-digit")];
+    var otpDigits = [...document.querySelectorAll("#otp-slots .otp-digit")];
+    var inviteDigits = [...document.querySelectorAll("#signup-slots .otp-digit")];
     var sendCodeButton = document.querySelector("#send-code");
     var retryButton = document.querySelector("#retry-passkey");
     var creatingWrap = document.querySelector("#creating-wrap");
@@ -12691,6 +12692,7 @@ var require_wallet = __commonJS({
     var lookupTimer = 0;
     var otpBusy = false;
     var otpAttempted = "";
+    var inviteAttempted = "";
     var balanceTimer = 0;
     var balanceInFlight = false;
     var recipientToken = 0;
@@ -13065,7 +13067,8 @@ var require_wallet = __commonJS({
       window.localStorage.setItem(EMAIL_KEY, email);
       accountEmail.textContent = email;
       me.src = await gravatarUrl(email, 68);
-      addressEl.textContent = accountId;
+      addressEl.textContent = accountId.length > 10 ? `${accountId.slice(0, 5)} ... ${accountId.slice(-5)}` : accountId;
+      addressEl.title = accountId;
       explorer.href = `${explorerBase()}/address/${accountId}`;
       tokenLabel.textContent = config.symbol;
       gasEl.textContent = "Network fees are paid from your NEAR balance.";
@@ -13081,6 +13084,8 @@ var require_wallet = __commonJS({
       creatingButton.disabled = true;
       creatingButton.setAttribute("aria-busy", active ? "true" : "false");
       otpInput.disabled = active;
+      if (active) useSignupKeyButton.hidden = true;
+      else if (!signupKeyField.hidden) useSignupKeyButton.hidden = false;
     }
     function paintOtp() {
       const digits = otpInput.value;
@@ -13091,6 +13096,26 @@ var require_wallet = __commonJS({
         slot.classList.toggle("filled", index < digits.length);
         slot.classList.toggle("active", focused && index === cursor);
       });
+    }
+    function paintInvite() {
+      const letters = signupKeyInput.value;
+      const cursor = letters.length < 8 ? letters.length : 7;
+      const focused = document.activeElement === signupKeyInput;
+      inviteDigits.forEach((slot, index) => {
+        slot.textContent = letters[index] ?? "";
+        slot.classList.toggle("filled", index < letters.length);
+        slot.classList.toggle("active", focused && index === cursor);
+      });
+    }
+    function onInviteInput() {
+      const letters = signupKeyInput.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 8);
+      if (signupKeyInput.value !== letters) signupKeyInput.value = letters;
+      paintInvite();
+      if (letters.length < 8) inviteAttempted = "";
+      if (letters.length === 8 && letters !== inviteAttempted && !otpBusy) {
+        inviteAttempted = letters;
+        createWallet().catch((error) => setStatus(explain(error)));
+      }
     }
     function onOtpInput() {
       const digits = otpInput.value.replace(/\D/g, "").slice(0, 6);
@@ -13116,9 +13141,11 @@ var require_wallet = __commonJS({
       otpInput.value = "";
       signupKeyField.hidden = true;
       signupKeyInput.value = "";
+      inviteAttempted = "";
       useSignupKeyButton.hidden = true;
       setCreating(false);
       paintOtp();
+      paintInvite();
       otpInput.focus();
       setStatus(result.devCode ? `Development code ${result.devCode}` : "Check your email for the code.");
     }
@@ -13144,7 +13171,8 @@ var require_wallet = __commonJS({
         signupKeyField.hidden = false;
         useSignupKeyButton.hidden = false;
         setCreating(false);
-        setStatus("Enter the signup key you were given.");
+        paintInvite();
+        setStatus("Enter the invite code.");
         signupKeyInput.focus();
       } catch (error) {
         setCreating(false);
@@ -13166,9 +13194,9 @@ var require_wallet = __commonJS({
         setStatus("Verify the email first.");
         return;
       }
-      const signupKey = signupKeyField.hidden ? "" : signupKeyInput.value.trim();
-      if (!signupKeyField.hidden && !signupKey) {
-        setStatus("Enter the signup key you were given.");
+      const signupKey = signupKeyField.hidden ? "" : signupKeyInput.value;
+      if (!signupKeyField.hidden && !/^[A-Z]{8}$/.test(signupKey)) {
+        setStatus("Enter the invite code.");
         return;
       }
       retryButton.hidden = true;
@@ -13450,6 +13478,9 @@ var require_wallet = __commonJS({
     otpInput.addEventListener("input", () => onOtpInput());
     otpInput.addEventListener("focus", () => paintOtp());
     otpInput.addEventListener("blur", () => paintOtp());
+    signupKeyInput.addEventListener("input", () => onInviteInput());
+    signupKeyInput.addEventListener("focus", () => paintInvite());
+    signupKeyInput.addEventListener("blur", () => paintInvite());
     retryButton.addEventListener("click", () => {
       createWallet().catch((error) => setStatus(explain(error)));
     });

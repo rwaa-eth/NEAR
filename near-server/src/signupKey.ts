@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "./db";
 
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 export type InviteCode = {
   seq: number;
@@ -17,7 +17,7 @@ function randomCode(length: number): string {
 }
 
 export function normalizeSignupKey(code: string): string {
-  return code.trim().toUpperCase();
+  return code.toUpperCase().replace(/[^A-Z]/g, "");
 }
 
 /** Next invite code in issuance order. The row exists only until an account uses it. */
@@ -26,7 +26,8 @@ export function issueSignupKey(db: Db): InviteCode {
     const row = db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM invite_codes").get() as { seq: number };
     const seq = row.seq + 1;
     const createdAt = new Date().toISOString();
-    const code = `${seq}-${randomCode(8)}`;
+    let code = randomCode(8);
+    while (db.prepare("SELECT seq FROM invite_codes WHERE code = ?").get(code)) code = randomCode(8);
     db.prepare("INSERT INTO invite_codes (seq, code, created_at) VALUES (?, ?, ?)").run(seq, code, createdAt);
     return { seq, code, createdAt };
   });

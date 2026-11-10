@@ -70,7 +70,8 @@ const otpInput = document.querySelector<HTMLInputElement>("#otp")!;
 const signupKeyField = document.querySelector<HTMLElement>("#signup-key-field")!;
 const signupKeyInput = document.querySelector<HTMLInputElement>("#signup-key")!;
 const useSignupKeyButton = document.querySelector<HTMLButtonElement>("#use-signup-key")!;
-const otpDigits = [...document.querySelectorAll<HTMLElement>("#otp-box .otp-digit")];
+const otpDigits = [...document.querySelectorAll<HTMLElement>("#otp-slots .otp-digit")];
+const inviteDigits = [...document.querySelectorAll<HTMLElement>("#signup-slots .otp-digit")];
 const sendCodeButton = document.querySelector<HTMLButtonElement>("#send-code")!;
 const retryButton = document.querySelector<HTMLButtonElement>("#retry-passkey")!;
 const creatingWrap = document.querySelector<HTMLElement>("#creating-wrap")!;
@@ -121,6 +122,7 @@ let verified: { email: string; emailToken: string } | null = null;
 let lookupTimer = 0;
 let otpBusy = false;
 let otpAttempted = "";
+let inviteAttempted = "";
 let balanceTimer = 0;
 let balanceInFlight = false;
 let recipientToken = 0;
@@ -545,7 +547,8 @@ async function showWallet(email: string, accountId: string, secret: string): Pro
   window.localStorage.setItem(EMAIL_KEY, email);
   accountEmail.textContent = email;
   me.src = await gravatarUrl(email, 68);
-  addressEl.textContent = accountId;
+  addressEl.textContent = accountId.length > 10 ? `${accountId.slice(0, 5)} ... ${accountId.slice(-5)}` : accountId;
+  addressEl.title = accountId;
   explorer.href = `${explorerBase()}/address/${accountId}`;
   tokenLabel.textContent = config.symbol;
   gasEl.textContent = "Network fees are paid from your NEAR balance.";
@@ -562,6 +565,8 @@ function setCreating(active: boolean): void {
   creatingButton.disabled = true;
   creatingButton.setAttribute("aria-busy", active ? "true" : "false");
   otpInput.disabled = active;
+  if (active) useSignupKeyButton.hidden = true;
+  else if (!signupKeyField.hidden) useSignupKeyButton.hidden = false;
 }
 
 function paintOtp(): void {
@@ -573,6 +578,28 @@ function paintOtp(): void {
     slot.classList.toggle("filled", index < digits.length);
     slot.classList.toggle("active", focused && index === cursor);
   });
+}
+
+function paintInvite(): void {
+  const letters = signupKeyInput.value;
+  const cursor = letters.length < 8 ? letters.length : 7;
+  const focused = document.activeElement === signupKeyInput;
+  inviteDigits.forEach((slot, index) => {
+    slot.textContent = letters[index] ?? "";
+    slot.classList.toggle("filled", index < letters.length);
+    slot.classList.toggle("active", focused && index === cursor);
+  });
+}
+
+function onInviteInput(): void {
+  const letters = signupKeyInput.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 8);
+  if (signupKeyInput.value !== letters) signupKeyInput.value = letters;
+  paintInvite();
+  if (letters.length < 8) inviteAttempted = "";
+  if (letters.length === 8 && letters !== inviteAttempted && !otpBusy) {
+    inviteAttempted = letters;
+    createWallet().catch((error: unknown) => setStatus(explain(error)));
+  }
 }
 
 function onOtpInput(): void {
@@ -600,9 +627,11 @@ async function sendCode(): Promise<void> {
   otpInput.value = "";
   signupKeyField.hidden = true;
   signupKeyInput.value = "";
+  inviteAttempted = "";
   useSignupKeyButton.hidden = true;
   setCreating(false);
   paintOtp();
+  paintInvite();
   otpInput.focus();
   setStatus(result.devCode ? `Development code ${result.devCode}` : "Check your email for the code.");
 }
@@ -629,7 +658,8 @@ async function verifyCode(): Promise<void> {
     signupKeyField.hidden = false;
     useSignupKeyButton.hidden = false;
     setCreating(false);
-    setStatus("Enter the signup key you were given.");
+    paintInvite();
+    setStatus("Enter the invite code.");
     signupKeyInput.focus();
   } catch (error) {
     setCreating(false);
@@ -653,9 +683,9 @@ async function createWallet(): Promise<void> {
     setStatus("Verify the email first.");
     return;
   }
-  const signupKey = signupKeyField.hidden ? "" : signupKeyInput.value.trim();
-  if (!signupKeyField.hidden && !signupKey) {
-    setStatus("Enter the signup key you were given.");
+  const signupKey = signupKeyField.hidden ? "" : signupKeyInput.value;
+  if (!signupKeyField.hidden && !/^[A-Z]{8}$/.test(signupKey)) {
+    setStatus("Enter the invite code.");
     return;
   }
   retryButton.hidden = true;
@@ -953,6 +983,9 @@ sendCodeButton.addEventListener("click", () => {
 otpInput.addEventListener("input", () => onOtpInput());
 otpInput.addEventListener("focus", () => paintOtp());
 otpInput.addEventListener("blur", () => paintOtp());
+signupKeyInput.addEventListener("input", () => onInviteInput());
+signupKeyInput.addEventListener("focus", () => paintInvite());
+signupKeyInput.addEventListener("blur", () => paintInvite());
 retryButton.addEventListener("click", () => {
   createWallet().catch((error: unknown) => setStatus(explain(error)));
 });

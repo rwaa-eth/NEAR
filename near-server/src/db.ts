@@ -110,6 +110,20 @@ export function openDatabase(sqlitePath: string): Db {
       DROP TABLE signup_keys;
     `);
   }
+  const prefixed = db.prepare("SELECT seq, code FROM invite_codes WHERE instr(code, '-') > 0").all() as Array<{
+    seq: number;
+    code: string;
+  }>;
+  const updateCode = db.prepare("UPDATE invite_codes SET code = ? WHERE seq = ?");
+  for (const row of prefixed) {
+    const letters = row.code.toUpperCase().replace(/[^A-Z]/g, "");
+    if (!/^[A-Z]{8}$/.test(letters)) continue;
+    const clash = db.prepare("SELECT seq FROM invite_codes WHERE code = ? AND seq != ?").get(letters, row.seq) as
+      | { seq: number }
+      | undefined;
+    if (clash) continue;
+    updateCode.run(letters, row.seq);
+  }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS parcels_owner_account ON parcels(owner_account_id)");
   db.exec("CREATE INDEX IF NOT EXISTS escrow_recipient ON escrow_deposits(recipient_email)");
   db.exec("CREATE INDEX IF NOT EXISTS escrow_sender ON escrow_deposits(sender_email)");
