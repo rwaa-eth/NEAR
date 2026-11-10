@@ -29,6 +29,7 @@ describe("NEAR network", () => {
     const config = loadConfig({});
     assert.equal(config.nearAccountBalance, 50_000_000_000_000_000_000_000n);
     assert.equal(config.invitePassword, "");
+    assert.equal(config.devPassword, "");
     assert.equal(config.nearTopupMinimum, 10_000_000_000_000_000_000_000n);
     const custom = loadConfig({ NEAR_ACCOUNT_BALANCE: "0.2", NEAR_TOPUP_MINIMUM: "0.03" });
     assert.equal(nearTopUp(0n, custom.nearAccountBalance, custom.nearTopupMinimum), custom.nearAccountBalance);

@@ -28,6 +28,7 @@ export interface Config {
   smtpUrl: string;
   emailDevMode: boolean;
   invitePassword: string;
+  devPassword: string;
 }
 
 function walletNetwork(value: string | undefined): "mainnet" | "testnet" {
@@ -96,5 +97,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     smtpUrl: (env.SMTP_URL ?? "").trim(),
     emailDevMode: env.EMAIL_DEV_MODE === "true" || env.EMAIL_DEV_MODE === "1",
     invitePassword: (env.INVITE_PASSWORD ?? "").trim(),
+    devPassword: (env.DEV_PASSWORD ?? "").trim(),
   };
 }

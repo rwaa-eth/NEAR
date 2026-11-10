@@ -12,6 +12,8 @@ import { publicKeyToString } from "./accountId";
 import { initPasskeyAccount } from "./relayer";
 import { issueSignupKey } from "./signupKey";
 import { registerNearWallet } from "./wallet";
+import { listEscrow } from "./escrow";
+import { accountBalance, callView } from "./near";
 
 const registerBody = z.object({
   challengeId: z.string().uuid(),
@@ -130,6 +132,68 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
     const body = z.object({ password: z.string().min(1).max(200) }).parse(request.body);
     if (!passwordOk(body.password, config.invitePassword)) throw statusError(401, "wrong password");
     return issueSignupKey(db);
+  });
+
+  app.get("/devcheck", async (_request, reply) => {
+    const html = fs.readFileSync(path.join(__dirname, "..", "public", "devcheck.html"), "utf8");
+    return reply.type("text/html").send(html);
+  });
+
+  app.post("/devcheck", async (request) => {
+    if (!config.devPassword) throw statusError(503, "dev check is not configured");
+    const body = z
+      .object({
+        password: z.string().min(1).max(200),
+        email: z.string().trim().email().transform((value) => value.toLowerCase()).optional(),
+      })
+      .parse(request.body);
+    if (!passwordOk(body.password, config.devPassword)) throw statusError(401, "wrong password");
+    if (!body.email) return { ok: true };
+    const account = db.prepare("SELECT account_id FROM near_accounts WHERE email = ?").get(body.email) as
+      | { account_id: string }
+      | undefined;
+    const escrow = listEscrow(db, body.email);
+    if (!account) {
+      return {
+        registered: false,
+        accountId: null,
+        symbol: config.tokenSymbol,
+        decimals: config.tokenDecimals,
+        near: null,
+        token: null,
+        incoming: escrow.incoming,
+      };
+    }
+    let near: string;
+    try {
+      near = await accountBalance(config.nearRpcUrl, account.account_id);
+    } catch (error) {
+      throw statusError(502, error instanceof Error ? error.message : "could not read the NEAR balance");
+    }
+    let token: string | null = null;
+    if (config.tokenAccount) {
+      try {
+        const value = await callView(config.nearRpcUrl, config.tokenAccount, "ft_balance_of", {
+          account_id: account.account_id,
+        });
+        token = typeof value === "string" ? value : "0";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!/not registered/i.test(message)) {
+          throw statusError(502, message || "could not read the token balance");
+        }
+        token = "0";
+      }
+    }
+    return {
+      registered: true,
+      accountId: account.account_id,
+      symbol: config.tokenSymbol,
+      decimals: config.tokenDecimals,
+      near,
+      token,
+      incoming: escrow.incoming,
+    };
   });
 
   app.get("/login", async (_request, reply) => {
@@ -320,6 +384,7 @@ function isPublic(request: FastifyRequest): boolean {
     url === "/" ||
     url === "/send" ||
     url === "/invite" ||
+    url === "/devcheck" ||
     url === "/login" ||
     url === "/login.js" ||
     url === "/favicon.ico" ||

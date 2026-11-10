@@ -4,6 +4,7 @@ import { buildApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { openDatabase } from "../src/db";
 import { implicitAccountId } from "../src/near";
+import { recordDeposits } from "../src/escrow";
 import { normalizeSignupKey } from "../src/signupKey";
 
 const publicKey = "ed25519:11111111111111111111111111111111";
@@ -178,6 +179,60 @@ describe("NEAR wallet", () => {
       },
     });
     assert.equal(created.statusCode, 200, created.body);
+    await app.close();
+  });
+
+  it("checks balances and payments waiting to collect from the dev page", async () => {
+    const config = loadConfig({
+      ...process.env,
+      STATIC_API_TOKEN: "test-token",
+      SQLITE_PATH: ":memory:",
+      NEAR_OPERATOR_KEY: "",
+      NEAR_RCV_KEY: "",
+      DEV_PASSWORD: "dev-secret",
+      NEAR_TOKEN_SYMBOL: "USDT",
+      NEAR_TOKEN_DECIMALS: "6",
+    });
+    const db = openDatabase(":memory:");
+    const app = buildApp(config, db);
+    recordDeposits(db, [
+      {
+        recipientEmail: "ada@example.com",
+        emailHash: "11".repeat(32),
+        senderEmail: "sam@example.com",
+        senderAddress: "a".repeat(64),
+        amount: "1500000",
+        txHash: "tx-dev",
+        logIndex: 0,
+        depositId: 4,
+        unlockAt: Math.floor(Date.now() / 1000) + 86_400,
+      },
+    ]);
+    const page = await app.inject({ method: "GET", url: "/devcheck" });
+    assert.equal(page.statusCode, 200);
+    assert.match(page.body, /id="password"/);
+    assert.match(page.body, /id="check-form" hidden/);
+    assert.equal(page.body.includes("dev-secret"), false);
+    const denied = await app.inject({
+      method: "POST",
+      url: "/devcheck",
+      payload: { password: "nope", email: "ada@example.com" },
+    });
+    assert.equal(denied.statusCode, 401);
+    const opened = await app.inject({ method: "POST", url: "/devcheck", payload: { password: "dev-secret" } });
+    assert.equal(opened.statusCode, 200, opened.body);
+    assert.equal(opened.json().ok, true);
+    const checked = await app.inject({
+      method: "POST",
+      url: "/devcheck",
+      payload: { password: "dev-secret", email: "Ada@Example.com" },
+    });
+    assert.equal(checked.statusCode, 200, checked.body);
+    assert.equal(checked.json().registered, false);
+    assert.equal(checked.json().near, null);
+    assert.equal(checked.json().incoming.length, 1);
+    assert.equal(checked.json().incoming[0].amount, "1500000");
+    assert.equal(checked.json().incoming[0].senderEmail, "sam@example.com");
     await app.close();
   });
 });
