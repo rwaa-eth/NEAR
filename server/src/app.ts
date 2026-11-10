@@ -84,7 +84,8 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
   app.setErrorHandler((error, _request, reply) => {
     const known = error as { statusCode?: number; message?: string };
     const statusCode = error instanceof ZodError ? 400 : (known.statusCode ?? 500);
-    reply.code(statusCode >= 400 ? statusCode : 500).send({ error: known.message ?? "request failed" });
+    const message = error instanceof ZodError ? (error.issues[0]?.message ?? "Invalid request") : (known.message ?? "request failed");
+    reply.code(statusCode >= 400 ? statusCode : 500).send({ error: message });
   });
 
   app.addHook("preHandler", async (request, reply) => {

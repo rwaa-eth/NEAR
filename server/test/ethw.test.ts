@@ -12,6 +12,7 @@ function testApp() {
     ...process.env,
     STATIC_API_TOKEN: "test-token",
     SQLITE_PATH: ":memory:",
+    EVM_NETWORK: "testnet",
     ERC20_ADDRESS: "0x2222222222222222222222222222222222222222",
     ERC20_SYMBOL: "USDT",
     BASE_PAYMASTER: "false",
@@ -54,6 +55,9 @@ describe("Base Sepolia wallet", () => {
     const config = await app.inject({ method: "GET", url: "/ethw/api/config" });
     assert.equal(config.statusCode, 200);
     assert.equal(config.json().symbol, "USDT");
+    assert.equal(config.json().network, "testnet");
+    assert.equal(config.json().chainId, 84532);
+    assert.equal(config.json().chainName, "Base Sepolia");
     assert.equal(config.json().erc20, "0x2222222222222222222222222222222222222222");
     assert.equal(config.json().escrow, null);
     assert.match(page.body, /To collect/);
@@ -63,6 +67,8 @@ describe("Base Sepolia wallet", () => {
     assert.match(page.body, /id="history"/);
     assert.match(page.body, /id="incoming-tip"/);
     assert.match(page.body, /id="open-send"/);
+    assert.match(page.body, /id="scan-address"/);
+    assert.match(page.body, /id="network-label"/);
     assert.match(page.body, /id="send-view"/);
     assert.match(page.body, /id="kind-chip"/);
     const sendPage = await app.inject({ method: "GET", url: "/send" });

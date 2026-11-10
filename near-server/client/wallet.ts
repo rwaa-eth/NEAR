@@ -217,6 +217,11 @@ function isPasskeyCancel(error: unknown): boolean {
   return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
 }
 
+function isTransientPasskey(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return /transient reason/i.test(message);
+}
+
 async function createPasskey(email: string): Promise<string> {
   if (!window.PublicKeyCredential) throw new Error("This browser cannot create a passkey.");
   const userId = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email)));
@@ -243,15 +248,27 @@ async function createPasskey(email: string): Promise<string> {
 }
 
 async function assertPasskey(credentialId: string): Promise<void> {
-  const assertion = await navigator.credentials.get({
-    publicKey: {
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
-      allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) as BufferSource }],
-      userVerification: "required",
-      timeout: 60_000,
-    },
-  });
-  if (!assertion) throw new Error("Passkey sign-in was cancelled.");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) as BufferSource }],
+          userVerification: "required",
+          timeout: 60_000,
+        },
+      });
+      if (!assertion) throw new Error("Passkey sign-in was cancelled.");
+      return;
+    } catch (error) {
+      if (attempt === 0 && isTransientPasskey(error)) {
+        setStatus("Passkey didn't respond. Trying again.");
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 function emailHash(email: string): string {

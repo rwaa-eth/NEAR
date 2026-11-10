@@ -102,7 +102,10 @@ export function registerEthWallet(app: FastifyInstance, config: Config, db: Db):
   });
 
   app.get("/ethw/api/config", async () => ({
-    chainId: 84532,
+    network: config.evmNetwork,
+    chainId: config.chainId,
+    chainName: config.chainName,
+    explorer: config.explorer,
     rpc: "/ethw/api/rpc",
     erc20: config.erc20Address || null,
     symbol: config.erc20Symbol,

@@ -1,0 +1,4 @@
+# near-sdk 5 only calls NEAR host functions such as panic_utf8 when this cfg is set.
+# Without it, a contract panic compiles to a bare `unreachable` opcode.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "near"]

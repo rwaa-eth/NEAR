@@ -11,7 +11,7 @@
     "deploy:usdt": "tsx script/deploy-usdt.ts",
     "fund": "tsx script/fund-usdt.ts",
     "deploy:escrow": "tsx script/deploy-escrow.ts",
-    "test": "tsx --test test/accountId.test.ts test/geo.test.ts test/api.test.ts test/ethw.test.ts test/escrow.test.ts test/otp.test.ts"
+    "test": "tsx --test test/accountId.test.ts test/geo.test.ts test/api.test.ts test/ethw.test.ts test/escrow.test.ts test/otp.test.ts test/payee.test.ts test/config.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
@@ -21,6 +21,7 @@
     "cbor-x": "^1.6.0",
     "esbuild": "^0.25.10",
     "fastify": "^5.2.1",
+    "jsqr": "^1.4.0",
     "near-api-js": "^5.1.0",
     "nodemailer": "^10.3.1",
     "qrcode": "^1.5.4",

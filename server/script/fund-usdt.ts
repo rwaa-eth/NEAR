@@ -1,12 +1,14 @@
 import { createPublicClient, createWalletClient, encodeFunctionData, formatUnits, http, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
+import { evmChain, evmDefaultRpc, walletNetwork } from "../src/chain";
 import { loadEnvFile, operatorKey } from "./load-env";
 
 loadEnvFile();
 
+const network = walletNetwork(process.env.EVM_NETWORK, "EVM_NETWORK");
 const token = (process.env.ERC20_ADDRESS ?? "").trim();
-const rpc = process.env.BASE_RPC_URL ?? "https://sepolia.base.org";
+const rpc = (process.env.BASE_RPC_URL ?? "").trim() || evmDefaultRpc(network);
+const chain = evmChain(network);
 const to = (process.argv[2] ?? "").trim();
 const amountText = (process.argv[3] ?? "1000").trim();
 
@@ -42,8 +44,8 @@ async function main(): Promise<void> {
 
   const account = privateKeyToAccount(operatorKey());
   const transport = http(rpc);
-  const wallet = createWalletClient({ account, chain: baseSepolia, transport });
-  const reader = createPublicClient({ chain: baseSepolia, transport });
+  const wallet = createWalletClient({ account, chain, transport });
+  const reader = createPublicClient({ chain, transport });
   const hash = await wallet.sendTransaction({
     to: token as `0x${string}`,
     data: encodeFunctionData({

@@ -11,7 +11,8 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { baseSepolia } from "viem/chains";
+import { base, baseSepolia, type Chain } from "viem/chains";
+import { mountAddressScanner } from "./scan";
 import {
   createBundlerClient,
   createWebAuthnCredential,
@@ -21,7 +22,10 @@ import {
 import QRCode from "qrcode";
 
 type Config = {
+  network: "mainnet" | "testnet";
   chainId: number;
+  chainName: string;
+  explorer: string;
   rpc: string;
   erc20: Address | null;
   symbol: string;
@@ -92,6 +96,7 @@ const incomingNote = document.querySelector<HTMLElement>("#incoming-note")!;
 const incomingTip = document.querySelector<HTMLButtonElement>("#incoming-tip")!;
 const collectButton = document.querySelector<HTMLButtonElement>("#collect")!;
 const gasEl = document.querySelector<HTMLElement>("#gas")!;
+const networkLabel = document.querySelector<HTMLElement>("#network-label")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 const COLLECT_TIP_KEY = "ethw.seenCollectTip";
 
@@ -108,7 +113,18 @@ type DetectedRecipient = {
   detail: string;
 };
 
-let config: Config;
+let config: Config = {
+  network: "testnet",
+  chainId: baseSepolia.id,
+  chainName: "Base Sepolia",
+  explorer: "https://sepolia.basescan.org",
+  rpc: "/ethw/api/rpc",
+  erc20: null,
+  symbol: "USDT",
+  paymaster: false,
+  escrow: null,
+  mailReady: false,
+};
 let current: StoredAccount | null = null;
 let decimals = 6;
 let lookupTimer = 0;
@@ -120,9 +136,18 @@ let emailToken: string | null = null;
 let verifiedEmail: string | null = null;
 const gravatarCache = new Map<string, string>();
 
+function activeChain(): Chain {
+  return config.chainId === base.id ? base : baseSepolia;
+}
+
+function applyNetwork(): void {
+  networkLabel.textContent = config.chainName;
+  recipientInput.placeholder = "email, +phone, or 0x address";
+}
+
 const client = () =>
   createPublicClient({
-    chain: baseSepolia,
+    chain: activeChain(),
     transport: http(new URL(config.rpc, window.location.origin).toString()),
   });
 
@@ -204,7 +229,7 @@ async function loadAccount(email: string): Promise<StoredAccount | null> {
 }
 
 function isEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
 }
 
 function isEvmAddress(value: string): boolean {
@@ -238,12 +263,12 @@ function detectRecipient(value: string): DetectedRecipient {
     return { kind: "empty", label: "Recipient", detail: "" };
   }
   if (isEmail(raw)) {
-    return { kind: "email", label: "Email", detail: "Escrow or direct send on Base Sepolia" };
+    return { kind: "email", label: "Email", detail: `Escrow or direct send on ${config.chainName}` };
   }
   if (isEvmAddress(raw)) {
     return {
       kind: "evm",
-      label: "EVM · Base Sepolia",
+      label: `EVM · ${config.chainName}`,
       detail: "Detected as an Ethereum-compatible address on this wallet’s network",
     };
   }
@@ -425,9 +450,9 @@ async function showWallet(account: StoredAccount): Promise<void> {
   emailInput.value = account.email;
   addressEl.textContent = shortAddress(account.address);
   addressEl.title = account.address;
-  explorer.href = `https://sepolia.basescan.org/address/${account.address}`;
+  explorer.href = `${config.explorer}/address/${account.address}`;
   tokenLabel.textContent = config.symbol;
-  gasEl.textContent = config.paymaster ? "Gas is sponsored on Base Sepolia." : "";
+  gasEl.textContent = config.paymaster ? `Gas is sponsored on ${config.chainName}.` : "";
   renderRoute();
   syncSendButton();
   await QRCode.toCanvas(qr, account.address, { width: 124, margin: 1 });
@@ -498,6 +523,14 @@ async function smartAccount() {
   });
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function syncSetupButtons(): void {
+  const ok = EMAIL_PATTERN.test(emailInput.value.trim());
+  openButton.disabled = !ok;
+  sendCodeButton.disabled = !ok || !config.mailReady;
+}
+
 function clearEmailVerification(): void {
   emailToken = null;
   verifiedEmail = null;
@@ -530,7 +563,7 @@ async function sendCode(): Promise<void> {
     setStatus("Enter the code from your email.");
     otpInput.focus();
   } finally {
-    sendCodeButton.disabled = false;
+    syncSetupButtons();
   }
 }
 
@@ -676,7 +709,7 @@ function renderEscrow(
     const item = document.createElement("li");
     item.append(`${describe(row)} · `);
     const link = document.createElement("a");
-    link.href = `https://sepolia.basescan.org/tx/${row.txHash}`;
+    link.href = `${config.explorer}/tx/${row.txHash}`;
     link.target = "_blank";
     link.rel = "noopener";
     link.textContent = "transaction";
@@ -756,7 +789,7 @@ async function reclaimEscrow(row: EscrowRow): Promise<void> {
   const bundler = createBundlerClient({
     client: client(),
     transport: http(new URL(config.rpc, window.location.origin).toString()),
-    chain: baseSepolia,
+    chain: activeChain(),
     paymaster: config.paymaster ? true : undefined,
   });
   const hash = await bundler.sendUserOperation({
@@ -770,12 +803,15 @@ async function reclaimEscrow(row: EscrowRow): Promise<void> {
               type: "function",
               name: "reclaim",
               stateMutability: "nonpayable",
-              inputs: [{ name: "depositId", type: "uint256" }],
+              inputs: [
+                { name: "emailHash", type: "bytes32" },
+                { name: "depositId", type: "uint256" },
+              ],
               outputs: [],
             },
           ],
           functionName: "reclaim",
-          args: [BigInt(row.depositId)],
+          args: [keccak256(toBytes(row.recipientEmail.trim().toLowerCase())), BigInt(row.depositId)],
         }),
       },
     ],
@@ -884,7 +920,7 @@ async function depositEscrow(email: string): Promise<void> {
     const bundler = createBundlerClient({
       client: client(),
       transport: http(new URL(config.rpc, window.location.origin).toString()),
-      chain: baseSepolia,
+      chain: activeChain(),
       paymaster: config.paymaster ? true : undefined,
     });
     const hash = await bundler.sendUserOperation({
@@ -957,14 +993,14 @@ async function sendToEvmAddress(to: `0x${string}`): Promise<void> {
     setStatus("Enter an amount greater than zero.");
     return;
   }
-  setStatus("Confirm the passkey to send on Base Sepolia.");
+  setStatus(`Confirm the passkey to send on ${config.chainName}.`);
   sendButton.disabled = true;
   try {
     const account = await smartAccount();
     const bundler = createBundlerClient({
       client: client(),
       transport: http(new URL(config.rpc, window.location.origin).toString()),
-      chain: baseSepolia,
+      chain: activeChain(),
       paymaster: config.paymaster ? true : undefined,
     });
     const hash = await bundler.sendUserOperation({
@@ -983,7 +1019,7 @@ async function sendToEvmAddress(to: `0x${string}`): Promise<void> {
     setStatus("Waiting for the transfer.");
     const receipt = await bundler.waitForUserOperationReceipt({ hash });
     const tx = receipt.receipt.transactionHash;
-    setStatus(`Sent on Base Sepolia. ${tx}`);
+    setStatus(`Sent on ${config.chainName}. ${tx}`);
     amountInput.value = "";
     await refreshBalances();
   } catch (error) {
@@ -1004,7 +1040,7 @@ async function sendToken(): Promise<void> {
     return;
   }
   if (detected.kind === "near") {
-    setStatus("NEAR transfers are not available yet. Use email or a Base Sepolia 0x address.");
+    setStatus(`NEAR transfers are not available yet. Use email or a ${config.chainName} 0x address.`);
     return;
   }
   if (detected.kind === "unknown" || detected.kind === "empty") {
@@ -1048,6 +1084,7 @@ openButton.addEventListener("click", () => {
   openWallet().catch((error: unknown) => setStatus(explain(error)));
 });
 emailInput.addEventListener("input", () => {
+  syncSetupButtons();
   if (verifiedEmail && verifiedEmail !== emailInput.value.trim().toLowerCase()) {
     clearEmailVerification();
     otpInput.disabled = false;
@@ -1110,11 +1147,17 @@ sendButton.addEventListener("click", () => {
   sendToken().catch((error: unknown) => setStatus(explain(error)));
 });
 
+mountAddressScanner((payee) => {
+  recipientInput.value = payee;
+  recipientInput.dispatchEvent(new Event("input"));
+  setStatus("Address scanned.");
+});
+
 void api<Config>("/ethw/api/config")
   .then(async (loaded) => {
     config = loaded;
-    sendCodeButton.disabled = !config.mailReady;
-    openButton.disabled = false;
+    applyNetwork();
+    syncSetupButtons();
     if (!config.mailReady) {
       setStatus("Set RESEND_API_KEY or SMTP_URL on the server to verify new wallets.");
     }

@@ -3,7 +3,7 @@ import path from "node:path";
 import { KeyPair, type KeyPairString } from "near-api-js";
 import { loadNearServerEnv, nearTokenAccount } from "./env";
 
-const RPC = "https://rpc.mainnet.near.org";
+const RPC = "https://free.rpc.fastnear.com";
 const OPERATOR = "54327b2f304e8cbe502a432a591c0bc182881e681e38fad97d270d8c2a90a073";
 const PARENT = "raopenwallet.near";
 const ESCROW = "escrow.raopenwallet.near";

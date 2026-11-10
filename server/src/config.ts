@@ -1,3 +1,5 @@
+import { evmChain, evmChainName, evmDefaultRpc, evmExplorer, walletNetwork, type WalletNetwork } from "./chain";
+
 export interface Config {
   port: number;
   token: string;
@@ -11,6 +13,10 @@ export interface Config {
   nearRpcUrl: string;
   relayerAccount: string;
   relayerKey: string;
+  evmNetwork: WalletNetwork;
+  chainId: number;
+  chainName: string;
+  explorer: string;
   baseRpcUrl: string;
   erc20Address: string;
   erc20Symbol: string;
@@ -36,6 +42,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .map((value) => value.trim())
     .filter(Boolean);
   const origins = [origin, ...fingerprints.map(androidOrigin)];
+  const evmNetwork = walletNetwork(env.EVM_NETWORK, "EVM_NETWORK");
+  const baseRpcUrl = (env.BASE_RPC_URL ?? "").trim() || evmDefaultRpc(evmNetwork);
   return {
     port: Number(env.PORT ?? 8080),
     token: env.STATIC_API_TOKEN ?? "dev-token-change-me",
@@ -49,7 +57,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     nearRpcUrl: env.NEAR_RPC_URL ?? "https://rpc.testnet.near.org",
     relayerAccount: env.NEAR_RELAYER_ACCOUNT ?? "",
     relayerKey: env.NEAR_RELAYER_KEY ?? "",
-    baseRpcUrl: env.BASE_RPC_URL ?? "https://sepolia.base.org",
+    evmNetwork,
+    chainId: evmChain(evmNetwork).id,
+    chainName: evmChainName(evmNetwork),
+    explorer: evmExplorer(evmNetwork),
+    baseRpcUrl,
     erc20Address: (env.ERC20_ADDRESS ?? "").trim(),
     erc20Symbol: (env.ERC20_SYMBOL ?? "USDT").trim() || "USDT",
     basePaymaster: env.BASE_PAYMASTER === "true" || env.BASE_PAYMASTER === "1",

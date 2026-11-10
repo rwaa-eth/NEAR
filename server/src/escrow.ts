@@ -1,4 +1,5 @@
 import { keccak_256 } from "@noble/hashes/sha3";
+import { evmChain } from "./chain";
 import type { Config } from "./config";
 import type { Db } from "./db";
 
@@ -140,7 +141,7 @@ export async function fetchReceipt(rpcUrl: string, txHash: string): Promise<Rece
   });
   const body = (await response.json()) as { error?: { message?: string }; result?: Receipt | null };
   if (!response.ok || body.error) throw new Error(body.error?.message || "Base RPC did not return a receipt");
-  if (!body.result) throw new Error("transaction is not on Base Sepolia yet");
+  if (!body.result) throw new Error("transaction is not on this network yet");
   return body.result;
 }
 
@@ -254,10 +255,10 @@ export function readOpenDeposit(
 export async function releaseOnChain(config: Config, hash: string, to: string): Promise<string> {
   const viem = await import("viem");
   const accounts = await import("viem/accounts");
-  const chains = await import("viem/chains");
+  const chain = evmChain(config.evmNetwork);
   const account = accounts.privateKeyToAccount(config.escrowOperatorKey as `0x${string}`);
   const transport = viem.http(config.baseRpcUrl);
-  const wallet = viem.createWalletClient({ account, chain: chains.baseSepolia, transport });
+  const wallet = viem.createWalletClient({ account, chain, transport });
   const txHash = await wallet.sendTransaction({
     to: config.escrowAddress as `0x${string}`,
     data: viem.encodeFunctionData({
@@ -277,7 +278,7 @@ export async function releaseOnChain(config: Config, hash: string, to: string): 
       args: [hash as `0x${string}`, to as `0x${string}`],
     }),
   });
-  const reader = viem.createPublicClient({ chain: chains.baseSepolia, transport });
+  const reader = viem.createPublicClient({ chain, transport });
   const receipt = await reader.waitForTransactionReceipt({ hash: txHash });
   if (receipt.status !== "success") throw new Error("escrow release reverted");
   return txHash;

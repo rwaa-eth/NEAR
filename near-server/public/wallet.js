@@ -12773,6 +12773,10 @@ var require_wallet = __commonJS({
     function isPasskeyCancel(error) {
       return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
     }
+    function isTransientPasskey(error) {
+      const message = error instanceof Error ? error.message : "";
+      return /transient reason/i.test(message);
+    }
     async function createPasskey(email) {
       if (!window.PublicKeyCredential) throw new Error("This browser cannot create a passkey.");
       const userId = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email)));
@@ -12798,15 +12802,27 @@ var require_wallet = __commonJS({
       return bytesToBase64Url(new Uint8Array(credential.rawId));
     }
     async function assertPasskey(credentialId) {
-      const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) }],
-          userVerification: "required",
-          timeout: 6e4
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const assertion = await navigator.credentials.get({
+            publicKey: {
+              challenge: crypto.getRandomValues(new Uint8Array(32)),
+              allowCredentials: [{ type: "public-key", id: base64UrlToBytes(credentialId) }],
+              userVerification: "required",
+              timeout: 6e4
+            }
+          });
+          if (!assertion) throw new Error("Passkey sign-in was cancelled.");
+          return;
+        } catch (error) {
+          if (attempt === 0 && isTransientPasskey(error)) {
+            setStatus("Passkey didn't respond. Trying again.");
+            await new Promise((resolve) => window.setTimeout(resolve, 400));
+            continue;
+          }
+          throw error;
         }
-      });
-      if (!assertion) throw new Error("Passkey sign-in was cancelled.");
+      }
     }
     function emailHash(email) {
       const digest = keccak_256(new TextEncoder().encode(email.trim().toLowerCase()));

@@ -3,14 +3,16 @@ import path from "node:path";
 import solc from "solc";
 import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
+import { evmChain, evmDefaultRpc, walletNetwork } from "../src/chain";
 import { loadEnvFile, operatorKey } from "./load-env";
 
 loadEnvFile();
 
 const contractsDir = path.join(__dirname, "..", "..", "contracts");
 const nodeModules = path.join(__dirname, "..", "node_modules");
-const rpc = process.env.BASE_RPC_URL ?? "https://sepolia.base.org";
+const network = walletNetwork(process.env.EVM_NETWORK, "EVM_NETWORK");
+const rpc = (process.env.BASE_RPC_URL ?? "").trim() || evmDefaultRpc(network);
+const chain = evmChain(network);
 
 function findImports(importPath: string): { contents: string } | { error: string } {
   const normalized = path.normalize(importPath);
@@ -47,8 +49,8 @@ const bytecode = compiled.contracts["TestUSDT.sol"].TestUSDT.evm.bytecode.object
 async function main(): Promise<void> {
   const account = privateKeyToAccount(operatorKey());
   const transport = http(rpc);
-  const wallet = createWalletClient({ account, chain: baseSepolia, transport });
-  const reader = createPublicClient({ chain: baseSepolia, transport });
+  const wallet = createWalletClient({ account, chain, transport });
+  const reader = createPublicClient({ chain, transport });
   const hash = await wallet.deployContract({
     abi: [
       {

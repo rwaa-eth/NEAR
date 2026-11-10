@@ -3,13 +3,15 @@ import path from "node:path";
 import solc from "solc";
 import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
+import { evmChain, evmDefaultRpc, walletNetwork } from "../src/chain";
 import { loadEnvFile, operatorKey } from "./load-env";
 
 loadEnvFile();
 
+const network = walletNetwork(process.env.EVM_NETWORK, "EVM_NETWORK");
 const token = (process.env.ERC20_ADDRESS ?? "").trim();
-const rpc = process.env.BASE_RPC_URL ?? "https://sepolia.base.org";
+const rpc = (process.env.BASE_RPC_URL ?? "").trim() || evmDefaultRpc(network);
+const chain = evmChain(network);
 
 if (!/^0x[0-9a-fA-F]{40}$/.test(token)) {
   throw new Error("Set ERC20_ADDRESS to the demo token before deploying escrow.");
@@ -41,8 +43,8 @@ if (errors.length > 0 || !compiled.contracts) {
 const bytecode = compiled.contracts["EmailEscrow.sol"].EmailEscrow.evm.bytecode.object;
   const account = privateKeyToAccount(key);
 const transport = http(rpc);
-const wallet = createWalletClient({ account, chain: baseSepolia, transport });
-const reader = createPublicClient({ chain: baseSepolia, transport });
+const wallet = createWalletClient({ account, chain, transport });
+const reader = createPublicClient({ chain, transport });
 
 async function main(): Promise<void> {
   const hash = await wallet.deployContract({
