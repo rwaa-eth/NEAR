@@ -733,7 +733,10 @@
       </label>
       <div class="actions">
         <button id="send-code" class="btn btn-primary" type="button" disabled>Sign Up</button>
-        <button id="open" class="btn btn-ghost" type="button" disabled>Open wallet</button>
+        <span id="open-wrap" class="await-ring">
+          <button id="open" class="btn btn-ghost" type="button" disabled>Open wallet</button>
+          <button id="opening" class="btn btn-wait" type="button" disabled hidden>Open wallet</button>
+        </span>
       </div>
       <div id="otp-box" hidden>
         <div class="otp-field">
@@ -807,6 +810,7 @@
           <div class="actions">
             <span id="collect-wrap" class="await-ring" hidden>
               <button id="collect" class="btn btn-primary" type="button">Collect</button>
+              <button id="collecting" class="btn btn-wait" type="button" disabled hidden>Collect</button>
             </span>
           </div>
         </div>

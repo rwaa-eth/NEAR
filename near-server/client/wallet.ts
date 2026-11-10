@@ -78,6 +78,8 @@ const retryButton = document.querySelector<HTMLButtonElement>("#retry-passkey")!
 const creatingWrap = document.querySelector<HTMLElement>("#creating-wrap")!;
 const creatingButton = document.querySelector<HTMLButtonElement>("#creating")!;
 const openButton = document.querySelector<HTMLButtonElement>("#open")!;
+const openingButton = document.querySelector<HTMLButtonElement>("#opening")!;
+const openWrap = document.querySelector<HTMLElement>("#open-wrap")!;
 const accountBox = document.querySelector<HTMLElement>("#account")!;
 const accountEmail = document.querySelector<HTMLElement>("#account-email")!;
 const accountTrigger = document.querySelector<HTMLButtonElement>("#account-trigger")!;
@@ -95,6 +97,7 @@ const incomingTip = document.querySelector<HTMLButtonElement>("#incoming-tip")!;
 const incomingNote = document.querySelector<HTMLElement>("#incoming-note")!;
 const incomingList = document.querySelector<HTMLElement>("#incoming")!;
 const collectButton = document.querySelector<HTMLButtonElement>("#collect")!;
+const collectingButton = document.querySelector<HTMLButtonElement>("#collecting")!;
 const collectWrap = document.querySelector<HTMLElement>("#collect-wrap")!;
 const historyList = document.querySelector<HTMLElement>("#history")!;
 const outgoingSection = document.querySelector<HTMLElement>("#outgoing-section")!;
@@ -785,38 +788,51 @@ async function createWallet(): Promise<void> {
   }
 }
 
+function setOpening(active: boolean): void {
+  openWrap.classList.toggle("busy", active);
+  openButton.hidden = active;
+  openingButton.hidden = !active;
+  openingButton.setAttribute("aria-busy", active ? "true" : "false");
+  if (!active) syncSetupButtons();
+}
+
 async function openWallet(): Promise<void> {
   const email = emailInput.value.trim().toLowerCase();
   if (!email) {
     setStatus("Enter an email.");
     return;
   }
-  const found = await api<{ registered: boolean; accountId?: string }>(
-    `/ethw/api/account?email=${encodeURIComponent(email)}`,
-  );
-  if (!found.registered || !found.accountId) {
-    setStatus("That email has no wallet yet. Send a code to create one.");
-    return;
-  }
-  const secret = keys()[found.accountId];
-  if (!secret) {
-    setStatus("This wallet was created on another device. The key stays in that browser.");
-    return;
-  }
-  setStatus("Confirm the passkey prompt.");
+  setOpening(true);
   try {
-    const existing = passkeys()[email];
-    if (existing) await assertPasskey(existing);
-    else savePasskey(email, await createPasskey(email));
-  } catch (error) {
-    if (isPasskeyCancel(error)) {
-      setStatus("Passkey sign-in was cancelled.");
+    const found = await api<{ registered: boolean; accountId?: string }>(
+      `/ethw/api/account?email=${encodeURIComponent(email)}`,
+    );
+    if (!found.registered || !found.accountId) {
+      setStatus("That email has no wallet yet. Send a code to create one.");
       return;
     }
-    throw error;
+    const secret = keys()[found.accountId];
+    if (!secret) {
+      setStatus("This wallet was created on another device. The key stays in that browser.");
+      return;
+    }
+    setStatus("Confirm the passkey prompt.");
+    try {
+      const existing = passkeys()[email];
+      if (existing) await assertPasskey(existing);
+      else savePasskey(email, await createPasskey(email));
+    } catch (error) {
+      if (isPasskeyCancel(error)) {
+        setStatus("Passkey sign-in was cancelled.");
+        return;
+      }
+      throw error;
+    }
+    setStatus("");
+    await showWallet(email, found.accountId, secret);
+  } finally {
+    setOpening(false);
   }
-  setStatus("");
-  await showWallet(email, found.accountId, secret);
 }
 
 function logout(): void {
@@ -1081,21 +1097,36 @@ async function sendToken(): Promise<void> {
   }
 }
 
+const COLLECT_ATTEMPTS = 5;
+
+function setCollecting(active: boolean): void {
+  collectWrap.classList.toggle("busy", active);
+  collectButton.hidden = active;
+  collectingButton.hidden = !active;
+  collectingButton.setAttribute("aria-busy", active ? "true" : "false");
+}
+
 async function collectEscrow(): Promise<void> {
   if (!current) return;
-  collectButton.disabled = true;
-  collectWrap.classList.add("busy");
-  collectButton.setAttribute("aria-busy", "true");
+  setCollecting(true);
   setStatus("Collecting the escrow balance.");
   try {
-    const result = await api<{ txHash: string }>("/ethw/api/escrow/release", { email: current.email });
-    setStatus(`Collected. ${result.txHash}`);
-    await refreshBalances();
-    await loadEscrow();
+    let lastError: unknown;
+    for (let attempt = 0; attempt < COLLECT_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await api<{ txHash: string }>("/ethw/api/escrow/release", { email: current.email });
+        setStatus(`Collected. ${result.txHash}`);
+        await refreshBalances();
+        await loadEscrow();
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < COLLECT_ATTEMPTS - 1) await pause(1000);
+      }
+    }
+    throw lastError;
   } finally {
-    collectWrap.classList.remove("busy");
-    collectButton.removeAttribute("aria-busy");
-    collectButton.disabled = false;
+    setCollecting(false);
   }
 }
 

@@ -12649,6 +12649,8 @@ var require_wallet = __commonJS({
     var creatingWrap = document.querySelector("#creating-wrap");
     var creatingButton = document.querySelector("#creating");
     var openButton = document.querySelector("#open");
+    var openingButton = document.querySelector("#opening");
+    var openWrap = document.querySelector("#open-wrap");
     var accountBox = document.querySelector("#account");
     var accountEmail = document.querySelector("#account-email");
     var accountTrigger = document.querySelector("#account-trigger");
@@ -12666,6 +12668,7 @@ var require_wallet = __commonJS({
     var incomingNote = document.querySelector("#incoming-note");
     var incomingList = document.querySelector("#incoming");
     var collectButton = document.querySelector("#collect");
+    var collectingButton = document.querySelector("#collecting");
     var collectWrap = document.querySelector("#collect-wrap");
     var historyList = document.querySelector("#history");
     var outgoingSection = document.querySelector("#outgoing-section");
@@ -13288,38 +13291,50 @@ var require_wallet = __commonJS({
         setStatus(explain(error));
       }
     }
+    function setOpening(active) {
+      openWrap.classList.toggle("busy", active);
+      openButton.hidden = active;
+      openingButton.hidden = !active;
+      openingButton.setAttribute("aria-busy", active ? "true" : "false");
+      if (!active) syncSetupButtons();
+    }
     async function openWallet() {
       const email = emailInput.value.trim().toLowerCase();
       if (!email) {
         setStatus("Enter an email.");
         return;
       }
-      const found = await api(
-        `/ethw/api/account?email=${encodeURIComponent(email)}`
-      );
-      if (!found.registered || !found.accountId) {
-        setStatus("That email has no wallet yet. Send a code to create one.");
-        return;
-      }
-      const secret = keys()[found.accountId];
-      if (!secret) {
-        setStatus("This wallet was created on another device. The key stays in that browser.");
-        return;
-      }
-      setStatus("Confirm the passkey prompt.");
+      setOpening(true);
       try {
-        const existing = passkeys()[email];
-        if (existing) await assertPasskey(existing);
-        else savePasskey(email, await createPasskey(email));
-      } catch (error) {
-        if (isPasskeyCancel(error)) {
-          setStatus("Passkey sign-in was cancelled.");
+        const found = await api(
+          `/ethw/api/account?email=${encodeURIComponent(email)}`
+        );
+        if (!found.registered || !found.accountId) {
+          setStatus("That email has no wallet yet. Send a code to create one.");
           return;
         }
-        throw error;
+        const secret = keys()[found.accountId];
+        if (!secret) {
+          setStatus("This wallet was created on another device. The key stays in that browser.");
+          return;
+        }
+        setStatus("Confirm the passkey prompt.");
+        try {
+          const existing = passkeys()[email];
+          if (existing) await assertPasskey(existing);
+          else savePasskey(email, await createPasskey(email));
+        } catch (error) {
+          if (isPasskeyCancel(error)) {
+            setStatus("Passkey sign-in was cancelled.");
+            return;
+          }
+          throw error;
+        }
+        setStatus("");
+        await showWallet(email, found.accountId, secret);
+      } finally {
+        setOpening(false);
       }
-      setStatus("");
-      await showWallet(email, found.accountId, secret);
     }
     function logout() {
       current = null;
@@ -13561,21 +13576,34 @@ var require_wallet = __commonJS({
         sendButton.disabled = false;
       }
     }
+    var COLLECT_ATTEMPTS = 5;
+    function setCollecting(active) {
+      collectWrap.classList.toggle("busy", active);
+      collectButton.hidden = active;
+      collectingButton.hidden = !active;
+      collectingButton.setAttribute("aria-busy", active ? "true" : "false");
+    }
     async function collectEscrow() {
       if (!current) return;
-      collectButton.disabled = true;
-      collectWrap.classList.add("busy");
-      collectButton.setAttribute("aria-busy", "true");
+      setCollecting(true);
       setStatus("Collecting the escrow balance.");
       try {
-        const result = await api("/ethw/api/escrow/release", { email: current.email });
-        setStatus(`Collected. ${result.txHash}`);
-        await refreshBalances();
-        await loadEscrow();
+        let lastError;
+        for (let attempt = 0; attempt < COLLECT_ATTEMPTS; attempt += 1) {
+          try {
+            const result = await api("/ethw/api/escrow/release", { email: current.email });
+            setStatus(`Collected. ${result.txHash}`);
+            await refreshBalances();
+            await loadEscrow();
+            return;
+          } catch (error) {
+            lastError = error;
+            if (attempt < COLLECT_ATTEMPTS - 1) await pause(1e3);
+          }
+        }
+        throw lastError;
       } finally {
-        collectWrap.classList.remove("busy");
-        collectButton.removeAttribute("aria-busy");
-        collectButton.disabled = false;
+        setCollecting(false);
       }
     }
     async function reclaimEscrow(row) {
