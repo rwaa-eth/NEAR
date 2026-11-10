@@ -67,7 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const nearNetwork = walletNetwork(env.NEAR_NETWORK);
   const nearRpcUrl =
     (env.NEAR_RPC_URL ?? "").trim() ||
-    (nearNetwork === "mainnet" ? "https://rpc.mainnet.near.org" : "https://rpc.testnet.near.org");
+    (nearNetwork === "mainnet" ? "https://free.rpc.fastnear.com" : "https://rpc.testnet.fastnear.com");
   return {
     port: Number(env.PORT ?? 8099),
     token: env.STATIC_API_TOKEN ?? "dev-token-change-me",

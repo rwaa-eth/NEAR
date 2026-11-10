@@ -7,13 +7,13 @@ describe("NEAR network", () => {
   it("defaults to testnet", () => {
     const config = loadConfig({});
     assert.equal(config.nearNetwork, "testnet");
-    assert.equal(config.nearRpcUrl, "https://rpc.testnet.near.org");
+    assert.equal(config.nearRpcUrl, "https://rpc.testnet.fastnear.com");
   });
 
   it("selects mainnet when asked", () => {
     const config = loadConfig({ NEAR_NETWORK: "mainnet" });
     assert.equal(config.nearNetwork, "mainnet");
-    assert.equal(config.nearRpcUrl, "https://rpc.mainnet.near.org");
+    assert.equal(config.nearRpcUrl, "https://free.rpc.fastnear.com");
   });
 
   it("keeps an explicit RPC URL", () => {
