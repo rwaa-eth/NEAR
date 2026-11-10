@@ -18,8 +18,9 @@ import {
   transfersFromOutcome,
 } from "./escrow";
 import { mailConfigured, sendMail } from "./mail";
-import { accountIdForEmail, accountBalance, callView, fetchTx, provisionAccount } from "./near";
+import { accountBalance, callView, ensureGas, fetchTx, implicitAccountId } from "./near";
 import { consumeEmailSession, issueOtp, verifyOtp } from "./otp";
+import { consumeSignupKey, releaseSignupKey, signupKeyAvailable } from "./signupKey";
 
 const email = z.string().trim().email().transform((value) => value.toLowerCase());
 const publicKey = z.string().regex(/^(ed25519|secp256k1):[1-9A-HJ-NP-Za-km-z]+$/);
@@ -29,6 +30,7 @@ const registerBody = z.object({
   email,
   publicKey,
   emailToken: z.string().trim().min(16).max(256),
+  signupKey: z.string().trim().min(1).max(80).optional(),
 });
 
 const otpSendBody = z.object({ email });
@@ -206,11 +208,14 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
 
   app.post("/ethw/api/register", async (request) => {
     const body = registerBody.parse(request.body);
-    const accountId = accountIdForEmail(body.email, config.nearNetwork);
     const existing = readAccount(db, body.email);
     if (existing) {
       if (existing.publicKey !== body.publicKey) throw statusError(409, "that email is already registered");
       return { email: existing.email, accountId: existing.accountId };
+    }
+    const invited = listEscrow(db, body.email).incoming.length > 0;
+    if (!invited && (!body.signupKey || !signupKeyAvailable(db, body.signupKey))) {
+      throw statusError(403, "a signup key is required");
     }
     try {
       consumeEmailSession(db, body.email, body.emailToken);
@@ -218,13 +223,16 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
       const known = error as Error & { statusCode?: number };
       throw statusError(known.statusCode ?? 500, known.message);
     }
+    const accountId = implicitAccountId(body.publicKey);
     const taken = db.prepare("SELECT email FROM near_accounts WHERE account_id = ?").get(accountId) as
       | { email: string }
       | undefined;
     if (taken) throw statusError(409, "that NEAR account already belongs to another email");
+    const spent = !invited && body.signupKey ? consumeSignupKey(db, body.signupKey) : undefined;
     try {
-      await provisionAccount(config, accountId, body.publicKey);
+      await ensureGas(config, accountId);
     } catch (error) {
+      if (spent) releaseSignupKey(db, spent);
       const known = error as Error & { statusCode?: number };
       throw statusError(known.statusCode ?? 502, known.message);
     }
@@ -234,6 +242,18 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
        VALUES (?, ?, ?, ?)`,
     ).run(body.email, accountId, body.publicKey, createdAt);
     return { email: body.email, accountId };
+  });
+
+  app.post("/ethw/api/gas", async (request) => {
+    const body = z.object({ email }).parse(request.body);
+    const account = readAccount(db, body.email);
+    if (!account) throw statusError(404, "that email is not registered");
+    try {
+      return await ensureGas(config, account.accountId);
+    } catch (error) {
+      const known = error as Error & { statusCode?: number };
+      throw statusError(known.statusCode ?? 502, known.message);
+    }
   });
 
   app.get("/ethw/api/escrow", async (request) => {
@@ -356,6 +376,7 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
     }
     let claimTx: string;
     try {
+      await ensureGas(config, account.accountId);
       claimTx = await releaseOnChain(config, emailHash(body.email), account.accountId);
     } catch (error) {
       throw statusError(502, error instanceof Error ? error.message : "escrow release failed");

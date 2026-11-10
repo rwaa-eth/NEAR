@@ -19,10 +19,15 @@ export interface Config {
   escrowAccount: string;
   operatorAccount: string;
   operatorKey: string;
+  /** Spendable NEAR a wallet is filled to, in yoctoNEAR. */
+  nearAccountBalance: bigint;
+  /** Refill when spendable NEAR is at or below this, in yoctoNEAR. */
+  nearTopupMinimum: bigint;
   emailFrom: string;
   resendApiKey: string;
   smtpUrl: string;
   emailDevMode: boolean;
+  invitePassword: string;
 }
 
 function walletNetwork(value: string | undefined): "mainnet" | "testnet" {
@@ -31,6 +36,13 @@ function walletNetwork(value: string | undefined): "mainnet" | "testnet" {
     throw new Error("NEAR_NETWORK must be mainnet or testnet");
   }
   return network;
+}
+
+function parseNear(value: string | undefined, fallback: string, name: string): bigint {
+  const raw = (value ?? "").trim() || fallback;
+  if (!/^\d+(\.\d{1,24})?$/.test(raw)) throw new Error(`${name} must be a NEAR amount`);
+  const [whole, frac = ""] = raw.split(".");
+  return BigInt(whole) * 10n ** 24n + BigInt(frac.padEnd(24, "0"));
 }
 
 function androidOrigin(fingerprint: string): string {
@@ -47,6 +59,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .filter(Boolean);
   const origins = [origin, ...fingerprints.map(androidOrigin)];
   const decimals = Number(env.NEAR_TOKEN_DECIMALS ?? 6);
+  const nearAccountBalance = parseNear(env.NEAR_ACCOUNT_BALANCE, "0.05", "NEAR_ACCOUNT_BALANCE");
+  const nearTopupMinimum = parseNear(env.NEAR_TOPUP_MINIMUM, "0.01", "NEAR_TOPUP_MINIMUM");
+  if (nearTopupMinimum >= nearAccountBalance) {
+    throw new Error("NEAR_TOPUP_MINIMUM must be below NEAR_ACCOUNT_BALANCE");
+  }
   const nearNetwork = walletNetwork(env.NEAR_NETWORK);
   const nearRpcUrl =
     (env.NEAR_RPC_URL ?? "").trim() ||
@@ -71,10 +88,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     tokenDecimals: Number.isInteger(decimals) && decimals >= 0 && decimals <= 24 ? decimals : 6,
     escrowAccount: (env.NEAR_ESCROW_ACCOUNT ?? "").trim(),
     operatorAccount: (env.NEAR_OPERATOR_ACCOUNT ?? "").trim(),
-    operatorKey: (env.NEAR_OPERATOR_KEY ?? "").trim(),
+    operatorKey: (env.NEAR_RCV_KEY ?? env.NEAR_OPERATOR_KEY ?? "").trim(),
+    nearAccountBalance,
+    nearTopupMinimum,
     emailFrom: (env.EMAIL_FROM ?? "RaOpenwallet <noreply@raopenwallet.org>").trim(),
     resendApiKey: (env.RESEND_API_KEY ?? "").trim(),
     smtpUrl: (env.SMTP_URL ?? "").trim(),
     emailDevMode: env.EMAIL_DEV_MODE === "true" || env.EMAIL_DEV_MODE === "1",
+    invitePassword: (env.INVITE_PASSWORD ?? "").trim(),
   };
 }

@@ -4,7 +4,7 @@ import { buildApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { openDatabase } from "../src/db";
 import { depositsFromOutcome, emailHash, paymentsFromOutcome, recordDeposits, recordDirectPayments, transfersFromOutcome } from "../src/escrow";
-import { accountIdForEmail, type TxOutcome } from "../src/near";
+import { accountIdForEmail, implicitAccountId, type TxOutcome } from "../src/near";
 
 const escrow = "escrow.testnet";
 const sender = "rw1111111111111111.testnet";
@@ -37,6 +37,7 @@ function appWith(extra: Record<string, string> = {}) {
     NEAR_ESCROW_ACCOUNT: "",
     NEAR_OPERATOR_ACCOUNT: "",
     NEAR_OPERATOR_KEY: "",
+    NEAR_RCV_KEY: "",
     EMAIL_DEV_MODE: "true",
     RESEND_API_KEY: "",
     SMTP_URL: "",
@@ -46,7 +47,11 @@ function appWith(extra: Record<string, string> = {}) {
   return { app: buildApp(config, db), db, config };
 }
 
-async function registerVerified(app: ReturnType<typeof appWith>["app"], email: string): Promise<string> {
+async function registerVerified(
+  app: ReturnType<typeof appWith>["app"],
+  email: string,
+  publicKey = "ed25519:11111111111111111111111111111111",
+): Promise<string> {
   const sent = await app.inject({ method: "POST", url: "/ethw/api/otp/send", payload: { email } });
   assert.equal(sent.statusCode, 200);
   const verified = await app.inject({
@@ -55,16 +60,23 @@ async function registerVerified(app: ReturnType<typeof appWith>["app"], email: s
     payload: { email, code: sent.json().devCode },
   });
   assert.equal(verified.statusCode, 200);
+  const issued = await app.inject({
+    method: "POST",
+    url: "/v1/signup-keys",
+    headers: { authorization: "Bearer test-token" },
+  });
+  assert.equal(issued.statusCode, 200, issued.body);
   const created = await app.inject({
     method: "POST",
     url: "/ethw/api/register",
     payload: {
       email,
-      publicKey: "ed25519:11111111111111111111111111111111",
+      publicKey,
       emailToken: verified.json().emailToken,
+      signupKey: issued.json().code,
     },
   });
-  assert.equal(created.statusCode, 200);
+  assert.equal(created.statusCode, 200, created.body);
   return created.json().accountId as string;
 }
 
@@ -174,6 +186,41 @@ describe("NEAR escrow records", () => {
     await app.close();
   });
 
+  it("opens a wallet without a signup key when a payment is waiting", async () => {
+    const { app, db } = appWith();
+    recordDeposits(db, [
+      {
+        recipientEmail: "friend@example.com",
+        emailHash: emailHash("friend@example.com"),
+        senderEmail: "ada@example.com",
+        senderAddress: sender,
+        amount: "1500000",
+        txHash: "Hash11111111111111111111111111111111",
+        logIndex: 0,
+        depositId: 1,
+        unlockAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+      },
+    ]);
+    const sent = await app.inject({ method: "POST", url: "/ethw/api/otp/send", payload: { email: "friend@example.com" } });
+    assert.equal(sent.statusCode, 200);
+    const verified = await app.inject({
+      method: "POST",
+      url: "/ethw/api/otp/verify",
+      payload: { email: "friend@example.com", code: sent.json().devCode },
+    });
+    const created = await app.inject({
+      method: "POST",
+      url: "/ethw/api/register",
+      payload: {
+        email: "friend@example.com",
+        publicKey: "ed25519:11111111111111111111111111111111",
+        emailToken: verified.json().emailToken,
+      },
+    });
+    assert.equal(created.statusCode, 200, created.body);
+    await app.close();
+  });
+
   it("refuses to record a deposit or release funds when the server cannot operate escrow", async () => {
     const { app, db } = appWith({ NEAR_ESCROW_ACCOUNT: escrow });
     const missing = await app.inject({
@@ -187,7 +234,7 @@ describe("NEAR escrow records", () => {
     });
     assert.equal(missing.statusCode, 404);
     const accountId = await registerVerified(app, "friend@example.com");
-    assert.equal(accountId, accountIdForEmail("friend@example.com"));
+    assert.equal(accountId, implicitAccountId("ed25519:11111111111111111111111111111111"));
     recordDeposits(db, [
       {
         recipientEmail: "friend@example.com",
@@ -215,7 +262,7 @@ describe("NEAR escrow records", () => {
   it("records a payment back when the recipient is an account id", async () => {
     const { app } = appWith();
     const ada = await registerVerified(app, "ada@example.com");
-    const friend = await registerVerified(app, "friend@example.com");
+    const friend = await registerVerified(app, "friend@example.com", "ed25519:8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR");
     const hash = "Hash44444444444444444444444444444444";
     const log = `EVENT_JSON:${JSON.stringify({
       standard: "nep141",

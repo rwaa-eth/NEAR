@@ -12,6 +12,8 @@ function testApp() {
     STATIC_API_TOKEN: "test-token",
     SQLITE_PATH: ":memory:",
     NEAR_PROVISION_ACCOUNTS: "false",
+    NEAR_OPERATOR_KEY: "",
+    NEAR_RCV_KEY: "",
     EMAIL_DEV_MODE: "true",
     RESEND_API_KEY: "",
     SMTP_URL: "",
@@ -31,7 +33,24 @@ describe("email OTP", () => {
         emailToken: "not-a-real-session-token",
       },
     });
-    assert.equal(blocked.statusCode, 401);
+    assert.equal(blocked.statusCode, 403);
+    const issuedEarly = await app.inject({
+      method: "POST",
+      url: "/v1/signup-keys",
+      headers: { authorization: "Bearer test-token" },
+    });
+    assert.equal(issuedEarly.statusCode, 200);
+    const unverified = await app.inject({
+      method: "POST",
+      url: "/ethw/api/register",
+      payload: {
+        email: "ada@example.com",
+        publicKey,
+        emailToken: "not-a-real-session-token",
+        signupKey: issuedEarly.json().code,
+      },
+    });
+    assert.equal(unverified.statusCode, 401);
 
     const sent = await app.inject({
       method: "POST",
@@ -58,6 +77,7 @@ describe("email OTP", () => {
         email: "ada@example.com",
         publicKey,
         emailToken,
+        signupKey: issuedEarly.json().code,
       },
     });
     assert.equal(created.statusCode, 200);

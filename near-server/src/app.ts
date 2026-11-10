@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import type { RegistrationResponseJSON } from "@simplewebauthn/types";
@@ -10,6 +10,7 @@ import { issueChallenge, tokenOk, verifyAssertion, verifyRegistration, type Asse
 import { bounds, centroid, geometryRev, haversineM, normalizeRing, presenceVerdict } from "./geo";
 import { publicKeyToString } from "./accountId";
 import { initPasskeyAccount } from "./relayer";
+import { issueSignupKey } from "./signupKey";
 import { registerNearWallet } from "./wallet";
 
 const registerBody = z.object({
@@ -42,6 +43,16 @@ const presenceBody = z.object({
   homeLongitude: z.number().gte(-180).lte(180).optional(),
   homeRadiusM: z.number().positive().max(5000).optional(),
 });
+
+function passwordOk(presented: string, expected: string): boolean {
+  const got = Buffer.from(presented);
+  const exp = Buffer.from(expected);
+  if (got.length !== exp.length) {
+    timingSafeEqual(exp, exp);
+    return false;
+  }
+  return timingSafeEqual(got, exp);
+}
 
 function statusError(statusCode: number, message: string): Error {
   const error = new Error(message) as Error & { statusCode: number };
@@ -94,7 +105,7 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
       return reply.code(401).send({ error: "missing static token" });
     }
     const url = request.routeOptions.url ?? "";
-    if (url === "/v1/auth/challenge" || url === "/v1/auth/register") return;
+    if (url === "/v1/auth/challenge" || url === "/v1/auth/register" || url === "/v1/signup-keys") return;
     const headers = readAssertion(request);
     const verified = await verifyAssertion(config, db, headers, request.method, request.url, request.rawBody ?? "");
     request.accountId = verified.accountId;
@@ -108,6 +119,18 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
 
   app.get("/", async (_request, reply) => reply.type("text/html").send(walletPage()));
   app.get("/send", async (_request, reply) => reply.type("text/html").send(walletPage()));
+
+  app.get("/invite", async (_request, reply) => {
+    const html = fs.readFileSync(path.join(__dirname, "..", "public", "invite.html"), "utf8");
+    return reply.type("text/html").send(html);
+  });
+
+  app.post("/invite", async (request) => {
+    if (!config.invitePassword) throw statusError(503, "invite codes are not configured");
+    const body = z.object({ password: z.string().min(1).max(200) }).parse(request.body);
+    if (!passwordOk(body.password, config.invitePassword)) throw statusError(401, "wrong password");
+    return issueSignupKey(db);
+  });
 
   app.get("/login", async (_request, reply) => {
     const html = fs
@@ -130,6 +153,8 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
   app.get("/.well-known/assetlinks.json", async () => assetLinks(config));
 
   app.post("/v1/auth/challenge", async () => issueChallenge(db));
+
+  app.post("/v1/signup-keys", async () => issueSignupKey(db));
 
   app.post("/v1/auth/register", async (request) => {
     const body = registerBody.parse(request.body);
@@ -294,6 +319,7 @@ function isPublic(request: FastifyRequest): boolean {
   return (
     url === "/" ||
     url === "/send" ||
+    url === "/invite" ||
     url === "/login" ||
     url === "/login.js" ||
     url === "/favicon.ico" ||

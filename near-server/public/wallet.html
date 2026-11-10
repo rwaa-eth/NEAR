@@ -377,6 +377,7 @@
       cursor: pointer;
     }
 
+    label[hidden] { display: none !important; }
     label {
       display: block;
       margin-top: 0.95rem;
@@ -708,7 +709,11 @@
             <span class="otp-digit" aria-hidden="true"></span>
           </div>
         </div>
+        <label id="signup-key-field" hidden>Signup key
+          <input id="signup-key" autocomplete="off" spellcheck="false" placeholder="From your invitation">
+        </label>
         <div class="actions">
+          <button id="use-signup-key" class="btn btn-primary" type="button" hidden>Create account</button>
           <span id="creating-wrap" class="await-ring" hidden>
             <button id="creating" class="btn btn-wait" type="button" disabled>Creating account</button>
           </span>

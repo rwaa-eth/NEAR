@@ -12638,6 +12638,9 @@ var require_wallet = __commonJS({
     var emailInput = document.querySelector("#email");
     var otpBox = document.querySelector("#otp-box");
     var otpInput = document.querySelector("#otp");
+    var signupKeyField = document.querySelector("#signup-key-field");
+    var signupKeyInput = document.querySelector("#signup-key");
+    var useSignupKeyButton = document.querySelector("#use-signup-key");
     var otpDigits = [...document.querySelectorAll("#otp-box .otp-digit")];
     var sendCodeButton = document.querySelector("#send-code");
     var retryButton = document.querySelector("#retry-passkey");
@@ -13111,6 +13114,9 @@ var require_wallet = __commonJS({
       verified = null;
       otpAttempted = "";
       otpInput.value = "";
+      signupKeyField.hidden = true;
+      signupKeyInput.value = "";
+      useSignupKeyButton.hidden = true;
       setCreating(false);
       paintOtp();
       otpInput.focus();
@@ -13127,8 +13133,19 @@ var require_wallet = __commonJS({
         const result = await api("/ethw/api/otp/verify", { email, code });
         verified = { email, emailToken: result.emailToken };
         retryButton.hidden = true;
-        setStatus("Email verified. Setting up your passkey.");
-        await createWallet();
+        const escrow = await api(`/ethw/api/escrow?email=${encodeURIComponent(email)}`);
+        if (escrow.incoming.length > 0) {
+          signupKeyField.hidden = true;
+          useSignupKeyButton.hidden = true;
+          setStatus("Email verified. Setting up your passkey.");
+          await createWallet();
+          return;
+        }
+        signupKeyField.hidden = false;
+        useSignupKeyButton.hidden = false;
+        setCreating(false);
+        setStatus("Enter the signup key you were given.");
+        signupKeyInput.focus();
       } catch (error) {
         setCreating(false);
         throw error;
@@ -13149,6 +13166,11 @@ var require_wallet = __commonJS({
         setStatus("Verify the email first.");
         return;
       }
+      const signupKey = signupKeyField.hidden ? "" : signupKeyInput.value.trim();
+      if (!signupKeyField.hidden && !signupKey) {
+        setStatus("Enter the signup key you were given.");
+        return;
+      }
       retryButton.hidden = true;
       setCreating(true);
       try {
@@ -13161,7 +13183,8 @@ var require_wallet = __commonJS({
         const created = await api("/ethw/api/register", {
           email: verified.email,
           publicKey: key.publicKey,
-          emailToken: verified.emailToken
+          emailToken: verified.emailToken,
+          ...signupKey ? { signupKey } : {}
         });
         saveKey(created.accountId, key.secret);
         window.sessionStorage.removeItem(PENDING_KEY);
@@ -13218,9 +13241,13 @@ var require_wallet = __commonJS({
       show("setup");
       setStatus("Logged out on this device. The key is still saved here.");
     }
+    function isEvmAddress(value) {
+      return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+    }
     function detectRecipient(raw) {
       const value = raw.trim();
       if (!value) return { kind: "empty", label: "Recipient", detail: "" };
+      if (isEvmAddress(value)) return { kind: "evm", label: "EVM", detail: "" };
       if (value.includes("@")) return { kind: "email", label: "Email", detail: "", email: value.toLowerCase() };
       if (value.startsWith("+")) return { kind: "phone", label: "Phone", detail: "Phone payouts are not wired up yet." };
       if (/^[a-z0-9][a-z0-9._-]*\.(near|testnet)$/.test(value) || /^[0-9a-f]{64}$/.test(value)) {
@@ -13238,6 +13265,12 @@ var require_wallet = __commonJS({
       kindChip.dataset.kind = detected.kind;
       kindChip.textContent = detected.label;
       if (detected.kind === "empty") {
+        recipientAvatar.hidden = true;
+        resolvedEl.textContent = "";
+        setSendEnabled(false);
+        return;
+      }
+      if (detected.kind === "evm") {
         recipientAvatar.hidden = true;
         resolvedEl.textContent = "";
         setSendEnabled(false);
@@ -13270,6 +13303,10 @@ var require_wallet = __commonJS({
       resolvedEl.textContent = account.registered ? `Registered \xB7 ${account.accountId}` : config.escrow ? "Not registered. A send is held until they open a wallet and collect it." : "Not registered. Escrow is not configured on this server.";
       setSendEnabled(Boolean(config.token && (account.registered || config.escrow)));
     }
+    async function ensureGas() {
+      if (!current) return;
+      await api("/ethw/api/gas", { email: current.email });
+    }
     async function confirmSendPasskey() {
       if (!current) return;
       setStatus("Confirm the passkey prompt.");
@@ -13283,12 +13320,14 @@ var require_wallet = __commonJS({
     async function sendToken() {
       if (!current) return;
       const detected = detectRecipient(recipientInput.value);
+      if (detected.kind === "evm") return;
       const amount = parseAmount(amountInput.value, config.decimals);
       sendButton.disabled = true;
       sendWrap.classList.add("busy");
       sendButton.setAttribute("aria-busy", "true");
       try {
         await confirmSendPasskey();
+        await ensureGas();
         const account = await nearAccount();
         if (detected.kind === "email") {
           if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
@@ -13386,6 +13425,7 @@ var require_wallet = __commonJS({
     }
     async function reclaimEscrow(row) {
       if (!current || !config.escrow || row.depositId === null) return;
+      await ensureGas();
       const account = await nearAccount();
       setStatus("Pulling the payment back.");
       const outcome = await account.functionCall({
@@ -13411,6 +13451,9 @@ var require_wallet = __commonJS({
     otpInput.addEventListener("focus", () => paintOtp());
     otpInput.addEventListener("blur", () => paintOtp());
     retryButton.addEventListener("click", () => {
+      createWallet().catch((error) => setStatus(explain(error)));
+    });
+    useSignupKeyButton.addEventListener("click", () => {
       createWallet().catch((error) => setStatus(explain(error)));
     });
     openButton.addEventListener("click", () => {
@@ -13466,6 +13509,11 @@ var require_wallet = __commonJS({
     mountAddressScanner((payee) => {
       recipientInput.value = payee;
       recipientInput.dispatchEvent(new Event("input"));
+      if (isEvmAddress(payee)) {
+        setSendEnabled(false);
+        setStatus("Bridging to EVM");
+        return;
+      }
       setStatus("Address scanned.");
     });
     void api("/ethw/api/config").then(async (loaded) => {

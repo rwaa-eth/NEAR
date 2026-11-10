@@ -40,6 +40,7 @@ type Detected =
   | { kind: "email"; label: string; detail: string; email: string }
   | { kind: "phone"; label: string; detail: string }
   | { kind: "near"; label: string; detail: string; accountId: string }
+  | { kind: "evm"; label: string; detail: string }
   | { kind: "unknown"; label: string; detail: string };
 
 const KEYS = "nearw.keys";
@@ -66,6 +67,9 @@ statusEl.addEventListener("transitionend", (event) => {
 const emailInput = document.querySelector<HTMLInputElement>("#email")!;
 const otpBox = document.querySelector<HTMLElement>("#otp-box")!;
 const otpInput = document.querySelector<HTMLInputElement>("#otp")!;
+const signupKeyField = document.querySelector<HTMLElement>("#signup-key-field")!;
+const signupKeyInput = document.querySelector<HTMLInputElement>("#signup-key")!;
+const useSignupKeyButton = document.querySelector<HTMLButtonElement>("#use-signup-key")!;
 const otpDigits = [...document.querySelectorAll<HTMLElement>("#otp-box .otp-digit")];
 const sendCodeButton = document.querySelector<HTMLButtonElement>("#send-code")!;
 const retryButton = document.querySelector<HTMLButtonElement>("#retry-passkey")!;
@@ -594,6 +598,9 @@ async function sendCode(): Promise<void> {
   verified = null;
   otpAttempted = "";
   otpInput.value = "";
+  signupKeyField.hidden = true;
+  signupKeyInput.value = "";
+  useSignupKeyButton.hidden = true;
   setCreating(false);
   paintOtp();
   otpInput.focus();
@@ -611,8 +618,19 @@ async function verifyCode(): Promise<void> {
     const result = await api<{ emailToken: string }>("/ethw/api/otp/verify", { email, code });
     verified = { email, emailToken: result.emailToken };
     retryButton.hidden = true;
-    setStatus("Email verified. Setting up your passkey.");
-    await createWallet();
+    const escrow = await api<{ incoming: unknown[] }>(`/ethw/api/escrow?email=${encodeURIComponent(email)}`);
+    if (escrow.incoming.length > 0) {
+      signupKeyField.hidden = true;
+      useSignupKeyButton.hidden = true;
+      setStatus("Email verified. Setting up your passkey.");
+      await createWallet();
+      return;
+    }
+    signupKeyField.hidden = false;
+    useSignupKeyButton.hidden = false;
+    setCreating(false);
+    setStatus("Enter the signup key you were given.");
+    signupKeyInput.focus();
   } catch (error) {
     setCreating(false);
     throw error;
@@ -635,6 +653,11 @@ async function createWallet(): Promise<void> {
     setStatus("Verify the email first.");
     return;
   }
+  const signupKey = signupKeyField.hidden ? "" : signupKeyInput.value.trim();
+  if (!signupKeyField.hidden && !signupKey) {
+    setStatus("Enter the signup key you were given.");
+    return;
+  }
   retryButton.hidden = true;
   setCreating(true);
   try {
@@ -648,6 +671,7 @@ async function createWallet(): Promise<void> {
       email: verified.email,
       publicKey: key.publicKey,
       emailToken: verified.emailToken,
+      ...(signupKey ? { signupKey } : {}),
     });
     saveKey(created.accountId, key.secret);
     window.sessionStorage.removeItem(PENDING_KEY);
@@ -707,9 +731,14 @@ function logout(): void {
   setStatus("Logged out on this device. The key is still saved here.");
 }
 
+function isEvmAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+}
+
 function detectRecipient(raw: string): Detected {
   const value = raw.trim();
   if (!value) return { kind: "empty", label: "Recipient", detail: "" };
+  if (isEvmAddress(value)) return { kind: "evm", label: "EVM", detail: "" };
   if (value.includes("@")) return { kind: "email", label: "Email", detail: "", email: value.toLowerCase() };
   if (value.startsWith("+")) return { kind: "phone", label: "Phone", detail: "Phone payouts are not wired up yet." };
   if (/^[a-z0-9][a-z0-9._-]*\.(near|testnet)$/.test(value) || /^[0-9a-f]{64}$/.test(value)) {
@@ -729,6 +758,12 @@ async function resolveRecipient(): Promise<void> {
   kindChip.dataset.kind = detected.kind;
   kindChip.textContent = detected.label;
   if (detected.kind === "empty") {
+    recipientAvatar.hidden = true;
+    resolvedEl.textContent = "";
+    setSendEnabled(false);
+    return;
+  }
+  if (detected.kind === "evm") {
     recipientAvatar.hidden = true;
     resolvedEl.textContent = "";
     setSendEnabled(false);
@@ -766,6 +801,11 @@ async function resolveRecipient(): Promise<void> {
   setSendEnabled(Boolean(config.token && (account.registered || config.escrow)));
 }
 
+async function ensureGas(): Promise<void> {
+  if (!current) return;
+  await api("/ethw/api/gas", { email: current.email });
+}
+
 async function confirmSendPasskey(): Promise<void> {
   if (!current) return;
   setStatus("Confirm the passkey prompt.");
@@ -780,12 +820,14 @@ async function confirmSendPasskey(): Promise<void> {
 async function sendToken(): Promise<void> {
   if (!current) return;
   const detected = detectRecipient(recipientInput.value);
+  if (detected.kind === "evm") return;
   const amount = parseAmount(amountInput.value, config.decimals);
   sendButton.disabled = true;
   sendWrap.classList.add("busy");
   sendButton.setAttribute("aria-busy", "true");
   try {
     await confirmSendPasskey();
+    await ensureGas();
     const account = await nearAccount();
     if (detected.kind === "email") {
       if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
@@ -885,6 +927,7 @@ async function collectEscrow(): Promise<void> {
 
 async function reclaimEscrow(row: EscrowRow): Promise<void> {
   if (!current || !config.escrow || row.depositId === null) return;
+  await ensureGas();
   const account = await nearAccount();
   setStatus("Pulling the payment back.");
   const outcome = await account.functionCall({
@@ -911,6 +954,9 @@ otpInput.addEventListener("input", () => onOtpInput());
 otpInput.addEventListener("focus", () => paintOtp());
 otpInput.addEventListener("blur", () => paintOtp());
 retryButton.addEventListener("click", () => {
+  createWallet().catch((error: unknown) => setStatus(explain(error)));
+});
+useSignupKeyButton.addEventListener("click", () => {
   createWallet().catch((error: unknown) => setStatus(explain(error)));
 });
 openButton.addEventListener("click", () => {
@@ -966,6 +1012,11 @@ sendButton.addEventListener("click", () => {
 mountAddressScanner((payee) => {
   recipientInput.value = payee;
   recipientInput.dispatchEvent(new Event("input"));
+  if (isEvmAddress(payee)) {
+    setSendEnabled(false);
+    setStatus("Bridging to EVM");
+    return;
+  }
   setStatus("Address scanned.");
 });
 

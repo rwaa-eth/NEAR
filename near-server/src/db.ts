@@ -81,6 +81,11 @@ export function openDatabase(sqlitePath: string): Db {
       refund_tx TEXT,
       UNIQUE(tx_hash, log_index)
     );
+    CREATE TABLE IF NOT EXISTS invite_codes (
+      seq INTEGER PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS presence_samples (
       id TEXT PRIMARY KEY,
       owner_account_id TEXT NOT NULL,
@@ -94,6 +99,16 @@ export function openDatabase(sqlitePath: string): Db {
   const parcelColumns = db.prepare("PRAGMA table_info(parcels)").all() as Array<{ name: string }>;
   if (!parcelColumns.some((column) => column.name === "geometry_rev")) {
     db.exec("ALTER TABLE parcels ADD COLUMN geometry_rev TEXT NOT NULL DEFAULT ''");
+  }
+  const legacyKeys = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'signup_keys'")
+    .get() as { name: string } | undefined;
+  if (legacyKeys) {
+    db.exec(`
+      INSERT OR IGNORE INTO invite_codes (seq, code, created_at)
+      SELECT seq, code, created_at FROM signup_keys WHERE used_at IS NULL;
+      DROP TABLE signup_keys;
+    `);
   }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS parcels_owner_account ON parcels(owner_account_id)");
   db.exec("CREATE INDEX IF NOT EXISTS escrow_recipient ON escrow_deposits(recipient_email)");

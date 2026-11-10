@@ -33,6 +33,24 @@ export function emailHash(email: string): string {
   return Buffer.from(keccak_256(new TextEncoder().encode(email.trim().toLowerCase()))).toString("hex");
 }
 
+const STORAGE_BYTE = 10n ** 19n;
+const gasInflight = new Map<string, Promise<{ toppedUp: boolean; amount: string }>>();
+
+/** Raw account id for an ed25519 public key. Sending NEAR to it creates the account. */
+export function implicitAccountId(publicKey: string): string {
+  const [curve, encoded] = publicKey.split(":");
+  if (curve !== "ed25519" || !encoded) throw new Error("a user account needs an ed25519 key");
+  const bytes = base58.decode(encoded);
+  if (bytes.length !== 32) throw new Error("ed25519 public key must be 32 bytes");
+  return Buffer.from(bytes).toString("hex");
+}
+
+/** YoctoNEAR to send so a wallet at `spendable` is refilled to `target` once it is at or below `floor`. */
+export function nearTopUp(spendable: bigint, target: bigint, floor: bigint): bigint {
+  if (spendable > floor || spendable >= target) return 0n;
+  return target - spendable;
+}
+
 /** Named testnet account for an email. The browser holds the full-access key. */
 export function accountIdForEmail(email: string, network = "testnet"): string {
   const suffix = network === "mainnet" ? "near" : "testnet";
@@ -59,6 +77,48 @@ export async function accountExists(rpcUrl: string, accountId: string): Promise<
     if (message.includes("does not exist") || message.includes("UNKNOWN_ACCOUNT")) return false;
     throw error;
   }
+}
+
+async function accountSpendable(rpcUrl: string, accountId: string): Promise<bigint> {
+  try {
+    const result = await rpc<{ amount?: string; storage_usage?: number }>(rpcUrl, "query", {
+      request_type: "view_account",
+      finality: "final",
+      account_id: accountId,
+    });
+    const amount = BigInt(result.amount ?? "0");
+    const locked = BigInt(result.storage_usage ?? 0) * STORAGE_BYTE;
+    return amount > locked ? amount - locked : 0n;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("does not exist") || message.includes("UNKNOWN_ACCOUNT")) return 0n;
+    throw error;
+  }
+}
+
+/** Send NEAR from the operator when the wallet cannot pay gas. No-op without an operator key. */
+export async function ensureGas(config: Config, accountId: string): Promise<{ toppedUp: boolean; amount: string }> {
+  if (!config.operatorAccount || !config.operatorKey) return { toppedUp: false, amount: "0" };
+  const existing = gasInflight.get(accountId);
+  if (existing) return existing;
+  const pending = refillGas(config, accountId).finally(() => {
+    if (gasInflight.get(accountId) === pending) gasInflight.delete(accountId);
+  });
+  gasInflight.set(accountId, pending);
+  return pending;
+}
+
+async function refillGas(config: Config, accountId: string): Promise<{ toppedUp: boolean; amount: string }> {
+  const spendable = await accountSpendable(config.nearRpcUrl, accountId);
+  const amount = nearTopUp(spendable, config.nearAccountBalance, config.nearTopupMinimum);
+  if (amount <= 0n) return { toppedUp: false, amount: "0" };
+  const near = await import("near-api-js");
+  const signer = await operatorSigner(config);
+  await signer.signAndSendTransaction({
+    receiverId: accountId,
+    actions: [near.transactions.transfer(amount)],
+  });
+  return { toppedUp: true, amount: amount.toString() };
 }
 
 export async function accountBalance(rpcUrl: string, accountId: string): Promise<string> {
