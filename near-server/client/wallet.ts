@@ -844,6 +844,59 @@ function logout(): void {
   setStatus("Logged out on this device. The key is still saved here.");
 }
 
+const RETURN_NEAR_RESERVE = 1_000_000_000_000_000_000_000n;
+
+async function emptyWallet(): Promise<void> {
+  if (!current) return;
+  accountMenu.hidden = true;
+  accountTrigger.setAttribute("aria-expanded", "false");
+  const agreed = window.confirm(`Send all ${config.symbol} and NEAR in this wallet back to the operator account?`);
+  if (!agreed) return;
+  try {
+    await confirmSendPasskey();
+    const target = await api<{ accountId: string }>("/ethw/api/return-target", {});
+    if (target.accountId === current.accountId) {
+      setStatus("This wallet is the operator account.");
+      return;
+    }
+    const before = await api<{ token: string | null; spendable: string }>(
+      `/ethw/api/balance?accountId=${encodeURIComponent(current.accountId)}`,
+    );
+    const account = await nearAccount();
+    const tokenAmount = before.token && before.token !== "0" ? before.token : "";
+    if (tokenAmount) {
+      if (!config.token) throw new Error("Set NEAR_TOKEN_ACCOUNT on the server.");
+      setStatus(`Sending ${config.symbol} back.`);
+      await account.functionCall({
+        contractId: config.token,
+        methodName: "ft_transfer",
+        args: { receiver_id: target.accountId, amount: tokenAmount, memo: null },
+        gas: TRANSFER_GAS,
+        attachedDeposit: 1n,
+      });
+    }
+    const after = await api<{ spendable: string }>(
+      `/ethw/api/balance?accountId=${encodeURIComponent(current.accountId)}`,
+    );
+    const spendable = BigInt(after.spendable || "0");
+    if (spendable > RETURN_NEAR_RESERVE) {
+      setStatus("Sending NEAR back.");
+      await account.sendMoney(target.accountId, spendable - RETURN_NEAR_RESERVE);
+    } else if (!tokenAmount) {
+      setStatus("Nothing to send.");
+      return;
+    }
+    await refreshBalances();
+    setStatus("Sent the wallet balance back to the operator account. A little NEAR stays behind to pay the fee.");
+  } catch (error) {
+    if (isPasskeyCancel(error)) {
+      setStatus("Passkey sign-in was cancelled.");
+      return;
+    }
+    throw error;
+  }
+}
+
 function isEvmAddress(value: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 }
@@ -1180,6 +1233,10 @@ accountTrigger.addEventListener("click", (event) => {
   event.stopPropagation();
   accountMenu.hidden = !accountMenu.hidden;
   accountTrigger.setAttribute("aria-expanded", accountMenu.hidden ? "false" : "true");
+});
+document.querySelector("#empty-wallet")!.addEventListener("click", (event) => {
+  event.stopPropagation();
+  emptyWallet().catch((error: unknown) => setStatus(explain(error)));
 });
 document.querySelector("#logout")!.addEventListener("click", () => logout());
 copyAddressButton.addEventListener("click", () => {

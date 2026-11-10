@@ -19,6 +19,7 @@ function testApp() {
     NEAR_TOKEN_ACCOUNT: "token.testnet",
     NEAR_TOKEN_SYMBOL: "USDT",
     NEAR_ESCROW_ACCOUNT: "",
+    NEAR_OPERATOR_ACCOUNT: "",
     NEAR_OPERATOR_KEY: "",
     NEAR_RCV_KEY: "",
     EMAIL_DEV_MODE: "true",
@@ -55,6 +56,8 @@ describe("NEAR wallet", () => {
     assert.match(page.body, /id="scan-address"/);
     assert.match(page.body, /To collect/);
     assert.match(page.body, /Waiting for collection/);
+    assert.match(page.body, /Empty wallet/);
+    assert.match(page.body, /\.lozenge \{[\s\S]*?z-index: 30;/);
     const config = await app.inject({ method: "GET", url: "/ethw/api/config" });
     assert.equal(config.statusCode, 200);
     assert.equal(config.json().symbol, "USDT");
@@ -233,6 +236,28 @@ describe("NEAR wallet", () => {
     assert.equal(checked.json().incoming.length, 1);
     assert.equal(checked.json().incoming[0].amount, "1500000");
     assert.equal(checked.json().incoming[0].senderEmail, "sam@example.com");
+    await app.close();
+  });
+
+  it("names the operator account a wallet can return funds to", async () => {
+    const missing = testApp();
+    const denied = await missing.inject({ method: "POST", url: "/ethw/api/return-target" });
+    assert.equal(denied.statusCode, 503);
+    await missing.close();
+    const config = loadConfig({
+      ...process.env,
+      STATIC_API_TOKEN: "test-token",
+      SQLITE_PATH: ":memory:",
+      NEAR_NETWORK: "testnet",
+      NEAR_OPERATOR_ACCOUNT: "operator.testnet",
+      NEAR_OPERATOR_KEY: "",
+      NEAR_RCV_KEY: "",
+      NEAR_TOKEN_ACCOUNT: "",
+    });
+    const app = buildApp(config, openDatabase(":memory:"));
+    const ready = await app.inject({ method: "POST", url: "/ethw/api/return-target" });
+    assert.equal(ready.statusCode, 200, ready.body);
+    assert.equal(ready.json().accountId, "operator.testnet");
     await app.close();
   });
 });

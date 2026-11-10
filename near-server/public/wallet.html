@@ -51,6 +51,8 @@
     }
 
     .lozenge {
+      position: relative;
+      z-index: 30;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -128,7 +130,7 @@
       position: absolute;
       top: calc(100% + 0.5rem);
       right: 0;
-      min-width: 9.5rem;
+      min-width: 11.5rem;
       padding: 0.35rem;
       border-radius: 1rem;
       background: var(--panel-solid);
@@ -721,6 +723,7 @@
           <img id="me" width="34" height="34" alt="">
         </button>
         <div id="account-menu" class="account-menu" role="menu" hidden>
+          <button id="empty-wallet" type="button" role="menuitem">Empty wallet</button>
           <button id="logout" type="button" role="menuitem">Log out</button>
         </div>
       </div>

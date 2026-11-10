@@ -18,7 +18,7 @@ import {
   transfersFromOutcome,
 } from "./escrow";
 import { mailConfigured, sendMail } from "./mail";
-import { accountBalance, callView, ensureGas, fetchTx, implicitAccountId } from "./near";
+import { accountFunds, callView, ensureGas, ensureTokenStorage, fetchTx, implicitAccountId } from "./near";
 import { consumeEmailSession, issueOtp, verifyOtp } from "./otp";
 import { consumeSignupKey, releaseSignupKey, signupKeyAvailable } from "./signupKey";
 
@@ -150,23 +150,31 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
 
   app.get("/ethw/api/balance", async (request) => {
     const query = z.object({ accountId: z.string().trim().min(2).max(64) }).parse(request.query);
-    let near: string;
+    let funds: { amount: string; spendable: string };
     try {
-      near = await accountBalance(config.nearRpcUrl, query.accountId);
+      funds = await accountFunds(config.nearRpcUrl, query.accountId);
     } catch (error) {
       throw statusError(502, error instanceof Error ? error.message : "could not read the NEAR balance");
     }
-    if (!config.tokenAccount) return { near, token: null };
+    const near = funds.amount;
+    const spendable = funds.spendable;
+    if (!config.tokenAccount) return { near, spendable, token: null };
     try {
       const token = await callView(config.nearRpcUrl, config.tokenAccount, "ft_balance_of", {
         account_id: query.accountId,
       });
-      return { near, token: typeof token === "string" ? token : "0" };
+      return { near, spendable, token: typeof token === "string" ? token : "0" };
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (/not registered/i.test(message)) return { near, token: "0" };
+      if (/not registered/i.test(message)) return { near, spendable, token: "0" };
       throw statusError(502, message || "could not read the token balance");
     }
+  });
+
+  app.post("/ethw/api/return-target", async () => {
+    if (!config.operatorAccount) throw statusError(503, "Set NEAR_OPERATOR_ACCOUNT on the server");
+    await ensureTokenStorage(config, config.operatorAccount);
+    return { accountId: config.operatorAccount };
   });
 
   app.post("/ethw/api/otp/send", async (request) => {

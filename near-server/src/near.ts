@@ -122,12 +122,24 @@ async function refillGas(config: Config, accountId: string): Promise<{ toppedUp:
 }
 
 export async function accountBalance(rpcUrl: string, accountId: string): Promise<string> {
-  const result = await rpc<{ amount?: string }>(rpcUrl, "query", {
+  const funds = await accountFunds(rpcUrl, accountId);
+  return funds.amount;
+}
+
+/** Total balance and the part that can be transferred. Storage stake stays locked. */
+export async function accountFunds(
+  rpcUrl: string,
+  accountId: string,
+): Promise<{ amount: string; spendable: string }> {
+  const result = await rpc<{ amount?: string; storage_usage?: number }>(rpcUrl, "query", {
     request_type: "view_account",
     finality: "final",
     account_id: accountId,
   });
-  return result.amount ?? "0";
+  const amount = BigInt(result.amount ?? "0");
+  const locked = BigInt(result.storage_usage ?? 0) * STORAGE_BYTE;
+  const spendable = amount > locked ? amount - locked : 0n;
+  return { amount: amount.toString(), spendable: spendable.toString() };
 }
 
 export async function accessKeys(rpcUrl: string, accountId: string): Promise<string[]> {
