@@ -616,7 +616,13 @@ async function showWallet(email: string, accountId: string, secret: string): Pro
   await QRCode.toCanvas(qr, accountId, { width: 124, margin: 1 });
   renderRoute();
   startBalanceRefresh();
-  await refreshBalances(true);
+  try {
+    await refreshBalances(true);
+  } catch (error) {
+    setBalance(nearBalance, "—");
+    setBalance(tokenBalance, "—");
+    setStatus(explain(error));
+  }
   await loadEscrow();
 }
 

@@ -163,7 +163,9 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
       });
       return { near, token: typeof token === "string" ? token : "0" };
     } catch (error) {
-      throw statusError(502, error instanceof Error ? error.message : "could not read the token balance");
+      const message = error instanceof Error ? error.message : "";
+      if (/not registered/i.test(message)) return { near, token: "0" };
+      throw statusError(502, message || "could not read the token balance");
     }
   });
 

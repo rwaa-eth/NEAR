@@ -13129,7 +13129,13 @@ var require_wallet = __commonJS({
       await import_qrcode.default.toCanvas(qr, accountId, { width: 124, margin: 1 });
       renderRoute();
       startBalanceRefresh();
-      await refreshBalances(true);
+      try {
+        await refreshBalances(true);
+      } catch (error) {
+        setBalance(nearBalance, "\u2014");
+        setBalance(tokenBalance, "\u2014");
+        setStatus(explain(error));
+      }
       await loadEscrow();
     }
     function setCreating(active) {
