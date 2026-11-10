@@ -10,6 +10,7 @@ desktop.ini
 
 # Secrets
 .env
+.env.testnet
 *.jks
 *.keystore
 export_credentials.cfg
