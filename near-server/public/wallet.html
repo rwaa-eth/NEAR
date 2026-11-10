@@ -592,6 +592,38 @@
       flex: none;
     }
     .recipient-field input { flex: 1; min-width: 0; width: auto; }
+    .recipient-wrap { position: relative; display: block; }
+    .suggest {
+      position: absolute;
+      z-index: 5;
+      left: 0;
+      right: 0;
+      top: calc(100% + 0.35rem);
+      margin: 0;
+      padding: 0.35rem;
+      list-style: none;
+      border-radius: 1rem;
+      border: 1px solid var(--line);
+      background: var(--panel-solid);
+      box-shadow: var(--shadow);
+    }
+    .suggest[hidden] { display: none !important; }
+    .suggest-item {
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: 0.7rem 0.85rem;
+      border: 0;
+      border-radius: 0.75rem;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+    }
+    .suggest-item:hover,
+    .suggest-item.active { background: rgba(224, 138, 43, 0.14); }
     .scan-btn {
       flex: none;
       margin: 0;
@@ -805,10 +837,13 @@
         <p class="hero-copy">Pay anyone with an email or a NEAR account. Scan a QR code to fill the address.</p>
         <p id="gas" class="muted"></p>
         <label>To
-          <span class="recipient-field">
-            <img id="recipient-avatar" width="38" height="38" alt="" hidden>
-            <input id="recipient" autocomplete="off" placeholder="email, +phone, or name.testnet">
-            <button id="scan-address" class="scan-btn" type="button">Scan</button>
+          <span class="recipient-wrap">
+            <span class="recipient-field">
+              <img id="recipient-avatar" width="38" height="38" alt="" hidden>
+              <input id="recipient" role="combobox" aria-autocomplete="list" aria-controls="recipient-suggest" aria-expanded="false" autocomplete="off" placeholder="email, +phone, or name.testnet">
+              <button id="scan-address" class="scan-btn" type="button">Scan</button>
+            </span>
+            <ul id="recipient-suggest" class="suggest" role="listbox" hidden></ul>
           </span>
         </label>
         <div id="kind-chip" class="kind-chip" data-kind="empty">Recipient</div>

@@ -46,6 +46,7 @@ type Detected =
 const KEYS = "nearw.keys";
 const PASSKEYS = "nearw.passkeys";
 const EMAIL_KEY = "nearw.email";
+const SENT_EMAILS = "nearw.sent-emails";
 const PENDING_KEY = "nearw.pending";
 const COLLECT_TIP_KEY = "nearw.collectTip";
 const TRANSFER_GAS = 30n * 10n ** 12n;
@@ -101,6 +102,7 @@ const outgoingList = document.querySelector<HTMLElement>("#outgoing")!;
 const gasEl = document.querySelector<HTMLElement>("#gas")!;
 const networkLabel = document.querySelector<HTMLElement>("#network-label")!;
 const recipientInput = document.querySelector<HTMLInputElement>("#recipient")!;
+const suggestList = document.querySelector<HTMLElement>("#recipient-suggest")!;
 const recipientAvatar = document.querySelector<HTMLImageElement>("#recipient-avatar")!;
 const kindChip = document.querySelector<HTMLElement>("#kind-chip")!;
 const resolvedEl = document.querySelector<HTMLElement>("#resolved")!;
@@ -120,6 +122,7 @@ let config: Config = {
 let current: { email: string; accountId: string; secret: string } | null = null;
 let verified: { email: string; emailToken: string } | null = null;
 let lookupTimer = 0;
+let suggestIndex = -1;
 let otpBusy = false;
 let otpAttempted = "";
 let inviteAttempted = "";
@@ -191,6 +194,23 @@ function passkeys(): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+function sentEmails(): string[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SENT_EMAILS) || "[]") as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string" && item.includes("@"));
+  } catch {
+    return [];
+  }
+}
+
+function rememberSentEmail(email: string): void {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized.includes("@")) return;
+  const next = [normalized, ...sentEmails().filter((item) => item !== normalized)].slice(0, 100);
+  window.localStorage.setItem(SENT_EMAILS, JSON.stringify(next));
 }
 
 function savePasskey(email: string, credentialId: string): void {
@@ -794,6 +814,59 @@ function detectRecipient(raw: string): Detected {
   return { kind: "unknown", label: "Recipient", detail: "Use an email or a NEAR account id." };
 }
 
+function hideSuggestions(): void {
+  suggestList.hidden = true;
+  suggestList.replaceChildren();
+  recipientInput.setAttribute("aria-expanded", "false");
+  suggestIndex = -1;
+}
+
+function matchingSentEmails(query: string): string[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return sentEmails().filter((email) => email.startsWith(needle) && email !== needle);
+}
+
+function chooseSuggestion(email: string): void {
+  recipientInput.value = email;
+  hideSuggestions();
+  recipientInput.dispatchEvent(new Event("input"));
+}
+
+function paintSuggestions(): void {
+  const matches = matchingSentEmails(recipientInput.value);
+  if (matches.length === 0) {
+    hideSuggestions();
+    return;
+  }
+  suggestList.replaceChildren();
+  matches.forEach((email) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "suggest-item";
+    button.setAttribute("role", "option");
+    button.textContent = email;
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      chooseSuggestion(email);
+    });
+    item.append(button);
+    suggestList.append(item);
+  });
+  suggestList.hidden = false;
+  recipientInput.setAttribute("aria-expanded", "true");
+  suggestIndex = -1;
+}
+
+function moveSuggestion(direction: 1 | -1): void {
+  const items = [...suggestList.querySelectorAll<HTMLButtonElement>(".suggest-item")];
+  if (items.length === 0) return;
+  suggestIndex = Math.min(items.length - 1, Math.max(0, suggestIndex + direction));
+  items.forEach((item, index) => item.classList.toggle("active", index === suggestIndex));
+  items[suggestIndex].scrollIntoView({ block: "nearest" });
+}
+
 function setSendEnabled(enabled: boolean, label = "Send"): void {
   sendButton.disabled = !enabled;
   sendButton.textContent = label;
@@ -896,6 +969,7 @@ async function sendToken(): Promise<void> {
           recipientEmail: detected.email,
           txHash: hash,
         });
+        rememberSentEmail(detected.email);
         setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.email}. ${hash}`);
       } else {
         if (!config.escrow) throw new Error("Set NEAR_ESCROW_ACCOUNT on the server.");
@@ -917,6 +991,7 @@ async function sendToken(): Promise<void> {
           recipientEmail: detected.email,
           txHash: hash,
         });
+        rememberSentEmail(detected.email);
         setStatus(`Held for ${detected.email}. ${hash}`);
       }
     } else if (detected.kind === "near") {
@@ -1051,11 +1126,29 @@ document.addEventListener("click", () => {
   accountMenu.hidden = true;
 });
 recipientInput.addEventListener("input", () => {
+  paintSuggestions();
   window.clearTimeout(lookupTimer);
   lookupTimer = window.setTimeout(() => {
     resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
   }, 300);
 });
+recipientInput.addEventListener("keydown", (event) => {
+  if (suggestList.hidden) return;
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    moveSuggestion(1);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    moveSuggestion(-1);
+  } else if (event.key === "Enter" && suggestIndex >= 0) {
+    event.preventDefault();
+    const chosen = suggestList.querySelectorAll<HTMLButtonElement>(".suggest-item")[suggestIndex];
+    if (chosen?.textContent) chooseSuggestion(chosen.textContent);
+  } else if (event.key === "Escape") {
+    hideSuggestions();
+  }
+});
+recipientInput.addEventListener("blur", () => hideSuggestions());
 sendButton.addEventListener("click", () => {
   sendToken().catch((error: unknown) => setStatus(explain(error)));
 });

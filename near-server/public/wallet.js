@@ -12618,6 +12618,7 @@ var require_wallet = __commonJS({
     var KEYS = "nearw.keys";
     var PASSKEYS = "nearw.passkeys";
     var EMAIL_KEY = "nearw.email";
+    var SENT_EMAILS = "nearw.sent-emails";
     var PENDING_KEY = "nearw.pending";
     var COLLECT_TIP_KEY = "nearw.collectTip";
     var TRANSFER_GAS = 30n * 10n ** 12n;
@@ -12672,6 +12673,7 @@ var require_wallet = __commonJS({
     var gasEl = document.querySelector("#gas");
     var networkLabel = document.querySelector("#network-label");
     var recipientInput = document.querySelector("#recipient");
+    var suggestList = document.querySelector("#recipient-suggest");
     var recipientAvatar = document.querySelector("#recipient-avatar");
     var kindChip = document.querySelector("#kind-chip");
     var resolvedEl = document.querySelector("#resolved");
@@ -12690,6 +12692,7 @@ var require_wallet = __commonJS({
     var current = null;
     var verified = null;
     var lookupTimer = 0;
+    var suggestIndex = -1;
     var otpBusy = false;
     var otpAttempted = "";
     var inviteAttempted = "";
@@ -12752,6 +12755,21 @@ var require_wallet = __commonJS({
       } catch {
         return {};
       }
+    }
+    function sentEmails() {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(SENT_EMAILS) || "[]");
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((item) => typeof item === "string" && item.includes("@"));
+      } catch {
+        return [];
+      }
+    }
+    function rememberSentEmail(email) {
+      const normalized = email.trim().toLowerCase();
+      if (!normalized.includes("@")) return;
+      const next = [normalized, ...sentEmails().filter((item) => item !== normalized)].slice(0, 100);
+      window.localStorage.setItem(SENT_EMAILS, JSON.stringify(next));
     }
     function savePasskey(email, credentialId) {
       const next = passkeys();
@@ -13299,6 +13317,54 @@ var require_wallet = __commonJS({
       }
       return { kind: "unknown", label: "Recipient", detail: "Use an email or a NEAR account id." };
     }
+    function hideSuggestions() {
+      suggestList.hidden = true;
+      suggestList.replaceChildren();
+      recipientInput.setAttribute("aria-expanded", "false");
+      suggestIndex = -1;
+    }
+    function matchingSentEmails(query) {
+      const needle = query.trim().toLowerCase();
+      if (!needle) return [];
+      return sentEmails().filter((email) => email.startsWith(needle) && email !== needle);
+    }
+    function chooseSuggestion(email) {
+      recipientInput.value = email;
+      hideSuggestions();
+      recipientInput.dispatchEvent(new Event("input"));
+    }
+    function paintSuggestions() {
+      const matches = matchingSentEmails(recipientInput.value);
+      if (matches.length === 0) {
+        hideSuggestions();
+        return;
+      }
+      suggestList.replaceChildren();
+      matches.forEach((email) => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "suggest-item";
+        button.setAttribute("role", "option");
+        button.textContent = email;
+        button.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          chooseSuggestion(email);
+        });
+        item.append(button);
+        suggestList.append(item);
+      });
+      suggestList.hidden = false;
+      recipientInput.setAttribute("aria-expanded", "true");
+      suggestIndex = -1;
+    }
+    function moveSuggestion(direction) {
+      const items = [...suggestList.querySelectorAll(".suggest-item")];
+      if (items.length === 0) return;
+      suggestIndex = Math.min(items.length - 1, Math.max(0, suggestIndex + direction));
+      items.forEach((item, index) => item.classList.toggle("active", index === suggestIndex));
+      items[suggestIndex].scrollIntoView({ block: "nearest" });
+    }
     function setSendEnabled(enabled, label = "Send") {
       sendButton.disabled = !enabled;
       sendButton.textContent = label;
@@ -13393,6 +13459,7 @@ var require_wallet = __commonJS({
               recipientEmail: detected.email,
               txHash: hash
             });
+            rememberSentEmail(detected.email);
             setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.email}. ${hash}`);
           } else {
             if (!config.escrow) throw new Error("Set NEAR_ESCROW_ACCOUNT on the server.");
@@ -13414,6 +13481,7 @@ var require_wallet = __commonJS({
               recipientEmail: detected.email,
               txHash: hash
             });
+            rememberSentEmail(detected.email);
             setStatus(`Held for ${detected.email}. ${hash}`);
           }
         } else if (detected.kind === "near") {
@@ -13545,11 +13613,29 @@ var require_wallet = __commonJS({
       accountMenu.hidden = true;
     });
     recipientInput.addEventListener("input", () => {
+      paintSuggestions();
       window.clearTimeout(lookupTimer);
       lookupTimer = window.setTimeout(() => {
         resolveRecipient().catch((error) => setStatus(explain(error)));
       }, 300);
     });
+    recipientInput.addEventListener("keydown", (event) => {
+      if (suggestList.hidden) return;
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveSuggestion(1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveSuggestion(-1);
+      } else if (event.key === "Enter" && suggestIndex >= 0) {
+        event.preventDefault();
+        const chosen = suggestList.querySelectorAll(".suggest-item")[suggestIndex];
+        if (chosen?.textContent) chooseSuggestion(chosen.textContent);
+      } else if (event.key === "Escape") {
+        hideSuggestions();
+      }
+    });
+    recipientInput.addEventListener("blur", () => hideSuggestions());
     sendButton.addEventListener("click", () => {
       sendToken().catch((error) => setStatus(explain(error)));
     });

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildApp } from "./app";
 import { loadConfig } from "./config";
+import { ensureTokenStorage } from "./near";
 
 function loadEnvFile(): void {
   const file = path.join(process.cwd(), ".env");
@@ -22,6 +23,11 @@ async function main(): Promise<void> {
   const app = buildApp(config);
   await app.listen({ port: config.port, host: "0.0.0.0" });
   console.log(`RWAA NEAR API listening on ${config.port}`);
+  if (config.escrowAccount) {
+    ensureTokenStorage(config, config.escrowAccount).catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : error);
+    });
+  }
 }
 
 main().catch((error) => {
