@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const envFile = path.join(__dirname, "..", "..", "server", ".env");
+const serverEnvFile = path.join(__dirname, "..", "..", "server", ".env");
+const nearServerEnvFile = path.join(__dirname, "..", "..", "near-server", ".env");
 
-export function loadServerEnv(): void {
-  if (!fs.existsSync(envFile)) {
-    throw new Error(`Missing ${envFile}`);
+function loadEnvFile(file: string): void {
+  if (!fs.existsSync(file)) {
+    throw new Error(`Missing ${file}`);
   }
-  for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
@@ -18,6 +19,22 @@ export function loadServerEnv(): void {
     if (comment >= 0) value = value.slice(0, comment).trim();
     if (!process.env[key]) process.env[key] = value;
   }
+}
+
+export function loadServerEnv(): void {
+  loadEnvFile(serverEnvFile);
+}
+
+export function loadNearServerEnv(): void {
+  loadEnvFile(nearServerEnvFile);
+}
+
+export function nearTokenAccount(): string {
+  const token = (process.env.NEAR_TOKEN_ACCOUNT ?? "").trim();
+  if (!/^[a-z0-9._-]{2,64}$/.test(token)) {
+    throw new Error("Set NEAR_TOKEN_ACCOUNT in near-server/.env to the NEP-141 account id.");
+  }
+  return token;
 }
 
 export function operatorKey(): `0x${string}` {

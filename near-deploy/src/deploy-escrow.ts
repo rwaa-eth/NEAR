@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { base58 } from "@scure/base";
 import { KeyPair, type KeyPairString } from "near-api-js";
-import { loadServerEnv, operatorKey } from "./env";
+import { loadNearServerEnv, loadServerEnv, nearTokenAccount, operatorKey } from "./env";
 import { operatorWallet } from "./wallet";
 
 const RPC = "https://rpc.testnet.near.org";
@@ -61,6 +61,8 @@ function txHash(outcome: { transaction?: { hash?: string } }): string {
 
 async function main(): Promise<void> {
   loadServerEnv();
+  loadNearServerEnv();
+  const tokenId = nearTokenAccount();
   const wallet = operatorWallet();
   const escrowId = `escrow.${wallet.accountId}`;
   if (!fs.existsSync(WASM)) throw new Error(`Missing wasm. Build contracts/near-escrow first: ${WASM}`);
@@ -105,7 +107,7 @@ async function main(): Promise<void> {
       near.transactions.deployContract(code),
       near.transactions.functionCall(
         "new",
-        { owner_id: wallet.accountId, token_id: wallet.accountId },
+        { owner_id: wallet.accountId, token_id: tokenId },
         250_000_000_000_000n,
         0n,
       ),
@@ -113,7 +115,7 @@ async function main(): Promise<void> {
   });
   console.log(`deployed escrow to ${escrowId}`);
   console.log(`owner ${wallet.accountId}`);
-  console.log(`token ${wallet.accountId}`);
+  console.log(`token ${tokenId}`);
   console.log(`deploy tx ${txHash(deployed)}`);
   console.log(`NEAR_ESCROW_ACCOUNT=${escrowId}`);
 }
