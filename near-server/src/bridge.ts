@@ -1,20 +1,16 @@
 import type { Config } from "./config";
 import { accountFunds, callView } from "./near";
 
-/** NEAR token Omni burns to unlock Ethereum USDT. Rhea pool 3689 swaps the wallet's USDT into this. */
-export const ETH_USDT_ACCOUNT = "dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near";
+const INTENTS_API = "https://1click.chaindefuser.com";
 const WALLET_USDT_ACCOUNT = "usdt.tether-token.near";
-const REF_EXCHANGE = "v2.ref-finance.near";
-const REF_POOL = 3689;
-const SWAP_GAS = 80_000_000_000_000n;
-const CALL_GAS = 15_000_000_000_000n;
-/** A completed registration of both USDT tokens used 0.00398 NEAR. */
-const REF_STORAGE_DEPOSIT = 4_200_000_000_000_000_000_000n;
+const ORIGIN_ASSET = `nep141:${WALLET_USDT_ACCOUNT}`;
+const DESTINATION_ASSET = "nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near";
+const TRANSFER_GAS = 30_000_000_000_000n;
+const STORAGE_GAS = 15_000_000_000_000n;
 const TOKEN_STORAGE_DEPOSIT = 1_250_000_000_000_000_000_000n;
-/** Live transfers burn about 10–30 TGas. 100 TGas is the allowance the wallet must hold. */
-const BRIDGE_TRANSFER_GAS = 100_000_000_000_000n;
-const BRIDGE_GAS = 10_000_000_000_000_000_000_000n;
-const SWAP_PATH_GAS = 15_000_000_000_000_000_000_000n;
+/** One transfer attaches 30 TGas, worth 0.003 NEAR, plus a little burn. */
+const GAS_RESERVE = 5_000_000_000_000_000_000_000n;
+const QUOTE_MS = 20 * 60 * 1000;
 
 export type BridgeAction = {
   methodName: string;
@@ -37,13 +33,23 @@ export type BridgePlan = {
   affordable: boolean;
   swapTransactions: BridgeTransaction[];
   transactions: BridgeTransaction[];
+  timeEstimate: number;
+  depositAddress?: string;
 };
 
 type BridgeInput = {
   accountId: string;
   recipient: string;
   amount: string;
-  bridgedAmount?: string;
+  commit?: boolean;
+};
+
+type IntentsQuote = {
+  depositAddress?: string;
+  depositMemo?: string | null;
+  amountIn: string;
+  amountOut: string;
+  timeEstimate?: number;
 };
 
 function bridgeError(statusCode: number, message: string): Error {
@@ -58,49 +64,10 @@ export function formatNear(yocto: bigint): string {
   return frac ? `${whole}.${frac}` : whole.toString();
 }
 
-/** Pay the relayer in the bridged token. The NEAR quote is the same charge priced in NEAR. */
-export function chooseBridgeFee(
-  quote: { tokenFee: bigint; nativeFee: bigint; usdFee: number },
-  decimals: number,
-): { tokenFee: bigint; nativeFee: bigint } {
-  if (quote.tokenFee > 0n) return { tokenFee: quote.tokenFee, nativeFee: 0n };
-  if (quote.usdFee > 0 && decimals >= 0 && decimals <= 24) {
-    return { tokenFee: usdToTokenUnits(quote.usdFee, decimals), nativeFee: 0n };
-  }
-  return { tokenFee: 0n, nativeFee: quote.nativeFee };
-}
-
-/** Keep one percent of slippage room. The bridge uses the amount the swap actually returns. */
-export function minSwapOut(quoted: bigint): bigint {
-  if (quoted <= 0n) return 0n;
-  return (quoted * 99n) / 100n;
-}
-
-function usdToTokenUnits(usd: number, decimals: number): bigint {
-  const [whole, frac = ""] = usd.toFixed(8).split(".");
-  const digits = `${frac}${"0".repeat(decimals)}`.slice(0, decimals);
-  const base = BigInt(whole || "0") * 10n ** BigInt(decimals) + BigInt(digits || "0");
-  return (base * 3n + 1n) / 2n;
-}
-
-function encodeTransaction(tx: {
-  receiverId: string;
-  actions: Array<{ type: string; methodName?: string; args?: Uint8Array; gas?: bigint; deposit?: bigint }>;
-}): BridgeTransaction {
-  return {
-    receiverId: tx.receiverId,
-    actions: tx.actions.map((action) => {
-      if (action.type !== "FunctionCall" || !action.methodName || !action.args || action.gas === undefined || action.deposit === undefined) {
-        throw bridgeError(502, "The bridge returned a transaction this wallet cannot sign.");
-      }
-      return {
-        methodName: action.methodName,
-        args: Buffer.from(action.args).toString("base64"),
-        gas: action.gas.toString(),
-        deposit: action.deposit.toString(),
-      };
-    }),
-  };
+/** USDT kept by NEAR Intents. The recipient gets `amountOut`. */
+export function intentsFee(amountIn: bigint, amountOut: bigint): bigint {
+  if (amountOut <= 0n || amountOut >= amountIn) return 0n;
+  return amountIn - amountOut;
 }
 
 function callTransaction(receiverId: string, methodName: string, args: object, gas: bigint, deposit: bigint): BridgeTransaction {
@@ -124,200 +91,118 @@ function depositTotal(transactions: BridgeTransaction[]): bigint {
   );
 }
 
-async function hasStorage(rpcUrl: string, contractId: string, accountId: string): Promise<boolean> {
-  const balance = await callView(rpcUrl, contractId, "storage_balance_of", { account_id: accountId });
+async function hasStorage(rpcUrl: string, accountId: string): Promise<boolean> {
+  const balance = await callView(rpcUrl, WALLET_USDT_ACCOUNT, "storage_balance_of", { account_id: accountId });
   return balance != null;
 }
 
-/** Tokens absent from a Rhea `get_deposits` map still need `register_tokens`. A zero balance counts as registered. */
-export function unregisteredRefTokens(deposits: Record<string, string> | null | undefined, tokens: string[]): string[] {
-  const present = deposits ?? {};
-  return tokens.filter((token) => !Object.prototype.hasOwnProperty.call(present, token));
-}
-
-async function quoteRefSwap(rpcUrl: string, amount: bigint): Promise<bigint> {
-  const pool = (await callView(rpcUrl, REF_EXCHANGE, "get_pool", { pool_id: REF_POOL })) as {
-    token_account_ids?: string[];
-  };
-  const tokens = pool.token_account_ids ?? [];
-  if (!tokens.includes(WALLET_USDT_ACCOUNT) || !tokens.includes(ETH_USDT_ACCOUNT)) {
-    throw bridgeError(502, "The USDT swap pool is not available.");
-  }
-  const quoted = await callView(rpcUrl, REF_EXCHANGE, "get_return", {
-    pool_id: REF_POOL,
-    token_in: WALLET_USDT_ACCOUNT,
-    amount_in: amount.toString(),
-    token_out: ETH_USDT_ACCOUNT,
+async function requestQuote(input: BridgeInput, commit: boolean): Promise<IntentsQuote> {
+  const response = await fetch(`${INTENTS_API}/v0/quote`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      dry: !commit,
+      swapType: "EXACT_INPUT",
+      slippageTolerance: 100,
+      originAsset: ORIGIN_ASSET,
+      depositType: "ORIGIN_CHAIN",
+      destinationAsset: DESTINATION_ASSET,
+      amount: input.amount,
+      recipient: input.recipient,
+      recipientType: "DESTINATION_CHAIN",
+      refundTo: input.accountId,
+      refundType: "ORIGIN_CHAIN",
+      deadline: new Date(Date.now() + QUOTE_MS).toISOString(),
+    }),
   });
-  return BigInt(typeof quoted === "string" || typeof quoted === "number" ? quoted : 0);
+  const body = (await response.json()) as { message?: string; quote?: IntentsQuote };
+  if (!response.ok || !body.quote?.amountIn || !body.quote.amountOut) {
+    throw bridgeError(response.status === 400 ? 400 : 502, body.message || "could not price the bridge");
+  }
+  return body.quote;
 }
 
-async function buildSwap(config: Config, accountId: string, amount: bigint, minOut: bigint): Promise<BridgeTransaction[]> {
-  const transactions: BridgeTransaction[] = [];
-  if (!(await hasStorage(config.nearRpcUrl, REF_EXCHANGE, accountId))) {
-    transactions.push(
-      callTransaction(REF_EXCHANGE, "storage_deposit", { account_id: accountId }, CALL_GAS, REF_STORAGE_DEPOSIT),
-    );
+export async function submitIntentsDeposit(depositAddress: string, txHash: string): Promise<void> {
+  const response = await fetch(`${INTENTS_API}/v0/deposit/submit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ depositAddress, txHash }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { message?: string };
+    throw bridgeError(502, body.message || "could not confirm the bridge deposit");
   }
-  const deposits = (await callView(config.nearRpcUrl, REF_EXCHANGE, "get_deposits", { account_id: accountId })) as
-    | Record<string, string>
-    | null;
-  const missing = unregisteredRefTokens(deposits, [WALLET_USDT_ACCOUNT, ETH_USDT_ACCOUNT]);
-  if (missing.length > 0) {
-    transactions.push(callTransaction(REF_EXCHANGE, "register_tokens", { token_ids: missing }, CALL_GAS, 1n));
-  }
-  if (!(await hasStorage(config.nearRpcUrl, ETH_USDT_ACCOUNT, accountId))) {
-    transactions.push(
-      callTransaction(ETH_USDT_ACCOUNT, "storage_deposit", { account_id: accountId }, CALL_GAS, TOKEN_STORAGE_DEPOSIT),
-    );
-  }
-  transactions.push(
-    callTransaction(
-      config.tokenAccount,
-      "ft_transfer_call",
-      {
-        receiver_id: REF_EXCHANGE,
-        amount: amount.toString(),
-        memo: null,
-        msg: JSON.stringify({
-          force: 0,
-          actions: [
-            {
-              pool_id: REF_POOL,
-              token_in: WALLET_USDT_ACCOUNT,
-              token_out: ETH_USDT_ACCOUNT,
-              amount_in: amount.toString(),
-              min_amount_out: minOut.toString(),
-            },
-          ],
-        }),
-      },
-      SWAP_GAS,
-      1n,
-    ),
-  );
-  return transactions;
-}
-
-async function buildBridge(
-  config: Config,
-  input: BridgeInput,
-  amount: bigint,
-): Promise<{ nativeFee: bigint; tokenFee: bigint; transactions: BridgeTransaction[] }> {
-  const { BridgeAPI, ChainKind, ValidationError, createBridge } = await import("@omni-bridge/core");
-  const { createNearBuilder } = await import("@omni-bridge/near");
-  const bridge = createBridge({ network: "mainnet", rpcUrls: { [ChainKind.Near]: config.nearRpcUrl } });
-  const api = new BridgeAPI("mainnet");
-  const nearBuilder = createNearBuilder({ network: "mainnet", rpcUrl: config.nearRpcUrl });
-  const token = `near:${ETH_USDT_ACCOUNT}` as const;
-  const sender = `near:${input.accountId}` as const;
-  const recipient = `eth:${input.recipient}` as const;
-
-  let nativeFee = 0n;
-  let tokenFee = 0n;
-  try {
-    const fee = await api.getFee(sender, recipient, token, amount);
-    const chosen = chooseBridgeFee(
-      {
-        tokenFee: BigInt(fee.transferred_token_fee ?? "0"),
-        nativeFee: fee.native_token_fee ?? 0n,
-        usdFee: fee.usd_fee,
-      },
-      config.tokenDecimals,
-    );
-    nativeFee = chosen.nativeFee;
-    tokenFee = chosen.tokenFee;
-  } catch (error) {
-    throw bridgeError(502, error instanceof Error ? error.message : "could not price the bridge");
-  }
-  if (tokenFee >= amount) throw bridgeError(400, "The bridge fee uses the whole amount.");
-
-  let validated: Awaited<ReturnType<typeof bridge.validateTransfer>>;
-  try {
-    validated = await bridge.validateTransfer({
-      token,
-      amount,
-      sender,
-      recipient,
-      fee: tokenFee,
-      nativeFee,
-    });
-  } catch (error) {
-    if (error instanceof ValidationError && error.code === "TOKEN_NOT_REGISTERED") {
-      throw bridgeError(400, "Omni Bridge cannot deliver this USDT to Ethereum.");
-    }
-    if (error instanceof ValidationError && error.code === "AMOUNT_TOO_SMALL") {
-      throw bridgeError(400, "That amount is too small to bridge.");
-    }
-    throw bridgeError(400, error instanceof Error ? error.message : "The bridge rejected this transfer.");
-  }
-
-  const transactions = [];
-  const storage = await nearBuilder.getRequiredStorageDeposit(input.accountId);
-  if (storage > 0n) transactions.push(nearBuilder.buildStorageDeposit(input.accountId, storage));
-  const tokenReady = await nearBuilder.isTokenStorageRegistered(ETH_USDT_ACCOUNT);
-  if (!tokenReady) transactions.push(await nearBuilder.buildTokenStorageDeposit(ETH_USDT_ACCOUNT, input.accountId));
-  transactions.push(nearBuilder.buildTransfer(validated, input.accountId));
-  const encoded = transactions.map(encodeTransaction).map((tx) => ({
-    ...tx,
-    actions: tx.actions.map((action) =>
-      action.methodName === "ft_transfer_call" && BigInt(action.gas) > BRIDGE_TRANSFER_GAS
-        ? { ...action, gas: BRIDGE_TRANSFER_GAS.toString() }
-        : action,
-    ),
-  }));
-  return { nativeFee, tokenFee, transactions: encoded };
 }
 
 export async function prepareEthereumBridge(config: Config, input: BridgeInput): Promise<BridgePlan> {
   if (config.nearNetwork !== "mainnet") {
     throw bridgeError(400, "Bridging to Ethereum is available on NEAR mainnet.");
   }
-  if (!config.tokenAccount) throw bridgeError(503, "Set NEAR_TOKEN_ACCOUNT on the server.");
+  if (config.tokenAccount !== WALLET_USDT_ACCOUNT) {
+    throw bridgeError(503, "Bridging expects usdt.tether-token.near.");
+  }
   const amount = BigInt(input.amount);
   if (amount <= 0n) throw bridgeError(400, "Enter an amount greater than zero.");
-  const direct = config.tokenAccount === ETH_USDT_ACCOUNT;
-  if (!direct && config.tokenAccount !== WALLET_USDT_ACCOUNT) {
-    throw bridgeError(400, "This token cannot be swapped onto Ethereum USDT.");
-  }
-  const bridgedAmount = input.bridgedAmount ? BigInt(input.bridgedAmount) : null;
-  if (bridgedAmount !== null && bridgedAmount <= 0n) throw bridgeError(400, "Enter an amount greater than zero.");
 
-  const needsSwap = bridgedAmount === null && !direct;
-  let swapOut = bridgedAmount ?? amount;
-  let swapTransactions: BridgeTransaction[] = [];
-  if (needsSwap) {
-    let quoted = 0n;
-    try {
-      quoted = await quoteRefSwap(config.nearRpcUrl, amount);
-    } catch (error) {
-      if (error instanceof Error && "statusCode" in error) throw error;
-      throw bridgeError(502, error instanceof Error ? error.message : "could not price the swap");
+  let quote: IntentsQuote;
+  try {
+    quote = await requestQuote(input, Boolean(input.commit));
+  } catch (error) {
+    if (error instanceof Error && "statusCode" in error) throw error;
+    throw bridgeError(502, error instanceof Error ? error.message : "could not price the bridge");
+  }
+  const amountIn = BigInt(quote.amountIn);
+  const amountOut = BigInt(quote.amountOut);
+  const tokenFee = intentsFee(amountIn, amountOut);
+  if (amountOut <= 0n || tokenFee >= amountIn) throw bridgeError(400, "That amount is too small to bridge.");
+
+  const transactions: BridgeTransaction[] = [];
+  if (input.commit) {
+    const depositAddress = quote.depositAddress?.trim() ?? "";
+    if (!/^[a-f0-9]{64}$/.test(depositAddress)) {
+      throw bridgeError(502, "The bridge did not return a NEAR deposit account.");
     }
-    const minOut = minSwapOut(quoted);
-    if (minOut <= 0n) throw bridgeError(400, "That amount is too small to swap.");
-    swapOut = quoted;
-    swapTransactions = await buildSwap(config, input.accountId, amount, minOut);
+    if (!(await hasStorage(config.nearRpcUrl, depositAddress))) {
+      transactions.push(
+        callTransaction(
+          WALLET_USDT_ACCOUNT,
+          "storage_deposit",
+          { account_id: depositAddress },
+          STORAGE_GAS,
+          TOKEN_STORAGE_DEPOSIT,
+        ),
+      );
+    }
+    transactions.push(
+      callTransaction(
+        WALLET_USDT_ACCOUNT,
+        "ft_transfer",
+        { receiver_id: depositAddress, amount: amountIn.toString(), memo: quote.depositMemo || null },
+        TRANSFER_GAS,
+        1n,
+      ),
+    );
   }
 
-  const bridge = await buildBridge(config, input, swapOut);
   let spendable = 0n;
   try {
     spendable = BigInt((await accountFunds(config.nearRpcUrl, input.accountId)).spendable);
   } catch (error) {
     throw bridgeError(502, error instanceof Error ? error.message : "could not read the NEAR balance");
   }
-  const required =
-    depositTotal(swapTransactions) + depositTotal(bridge.transactions) + (needsSwap ? SWAP_PATH_GAS : BRIDGE_GAS);
+  const previewStorage = input.commit ? 0n : TOKEN_STORAGE_DEPOSIT;
+  const required = depositTotal(transactions) + previewStorage + GAS_RESERVE;
   const affordable = spendable >= required;
   return {
-    nativeFee: bridge.nativeFee.toString(),
-    tokenFee: bridge.tokenFee.toString(),
-    receiveAmount: (swapOut - bridge.tokenFee).toString(),
-    swapOut: needsSwap ? swapOut.toString() : "0",
-    bridgedToken: ETH_USDT_ACCOUNT,
+    nativeFee: "0",
+    tokenFee: tokenFee.toString(),
+    receiveAmount: amountOut.toString(),
+    swapOut: "0",
+    bridgedToken: DESTINATION_ASSET,
     affordable,
-    swapTransactions: affordable && needsSwap ? swapTransactions : [],
-    transactions: affordable && !needsSwap ? bridge.transactions : [],
+    swapTransactions: [],
+    transactions: affordable && input.commit ? transactions : [],
+    timeEstimate: quote.timeEstimate ?? 30,
+    depositAddress: input.commit ? quote.depositAddress : undefined,
   };
 }

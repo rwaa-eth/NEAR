@@ -13483,15 +13483,12 @@ var require_wallet = __commonJS({
       return "This wallet needs a little NEAR left to pay the network fee.";
     }
     function bridgeFeeText(plan) {
-      const fees = [
-        plan.nativeFee !== "0" ? `${formatAmount(plan.nativeFee, 24, 4)} NEAR` : "",
-        plan.tokenFee !== "0" ? `${formatAmount(plan.tokenFee, config.decimals, 4)} ${config.symbol}` : ""
-      ].filter(Boolean);
-      const fee = fees.join(" and ");
+      const fee = plan.tokenFee !== "0" ? `${formatAmount(plan.tokenFee, config.decimals, 4)} ${config.symbol}` : "";
       const receive = formatAmount(plan.receiveAmount, config.decimals, 4);
-      const charge = fee ? `a ${fee} bridge fee` : "no relayer fee";
-      const lead = plan.swapTransactions.length > 0 ? `Swap into bridged USDT, then ${charge}` : charge.charAt(0).toUpperCase() + charge.slice(1);
-      return `${lead}. They receive ${receive} ${config.symbol} on Ethereum.`;
+      const charge = fee ? `A ${fee} fee` : "No fee";
+      const seconds = plan.timeEstimate || 30;
+      const when = seconds >= 90 ? `${Math.round(seconds / 60)} minutes` : `${seconds} seconds`;
+      return `${charge}. They receive ${receive} ${config.symbol} on Ethereum in about ${when}.`;
     }
     function setSendEnabled(enabled, label = "Send") {
       sendButton.disabled = !enabled;
@@ -13675,7 +13672,7 @@ var require_wallet = __commonJS({
         } else if (detected.kind === "evm") {
           const hash = await bridgeToEthereum(account, recipientInput.value.trim(), amount);
           const sentLabel = formatAmount(amount.toString(), config.decimals);
-          setStatus(`Bridging ${sentLabel} ${config.symbol} to ${recipientInput.value.trim()}. Ethereum receives it after the relayer finishes. ${hash}`);
+          setStatus(`Bridging ${sentLabel} ${config.symbol} to ${recipientInput.value.trim()}. Ethereum receives it after NEAR Intents finishes. ${hash}`);
         } else {
           throw new Error("Choose an email, a NEAR account, or an Ethereum address.");
         }
@@ -13693,33 +13690,6 @@ var require_wallet = __commonJS({
         resolveRecipient().catch((error) => setStatus(explain(error)));
       }
     }
-    function amountReceived(outcome, accountId, token) {
-      let received = 0n;
-      for (const receipt of outcome.receipts_outcome ?? []) {
-        if (receipt.outcome?.executor_id !== token) continue;
-        for (const log of receipt.outcome.logs ?? []) {
-          if (!log.startsWith("EVENT_JSON:")) continue;
-          try {
-            const event = JSON.parse(log.slice("EVENT_JSON:".length));
-            if (event.event !== "ft_transfer" || !Array.isArray(event.data)) continue;
-            for (const row of event.data) {
-              if (row.new_owner_id === accountId && row.amount) received += BigInt(row.amount);
-            }
-          } catch {
-            continue;
-          }
-        }
-      }
-      if (received > 0n) return received;
-      const pattern = new RegExp(`for (\\d+) ${token.replace(/[.]/g, "\\.")}`);
-      for (const receipt of outcome.receipts_outcome ?? []) {
-        for (const log of receipt.outcome?.logs ?? []) {
-          const match = log.match(pattern);
-          if (match?.[1]) return BigInt(match[1]);
-        }
-      }
-      return 0n;
-    }
     async function signBridgeTransaction(account, tx) {
       const outcome = await account.signAndSendTransaction({
         receiverId: tx.receiverId,
@@ -13735,41 +13705,24 @@ var require_wallet = __commonJS({
       const plan = await api("/ethw/api/bridge", {
         accountId: current.accountId,
         recipient,
-        amount: amount.toString()
+        amount: amount.toString(),
+        commit: true
       });
-      if (!plan.affordable || plan.swapTransactions.length === 0 && plan.transactions.length === 0) {
+      if (!plan.affordable || plan.transactions.length === 0) {
         throw new Error(bridgeShortfall(plan));
       }
-      let factoryAmount = 0n;
       let hash = "";
-      if (plan.swapTransactions.length > 0) {
-        let outcome = null;
-        for (const tx of plan.swapTransactions) {
-          setStatus(tx.actions.some((action) => action.methodName === "ft_transfer_call") ? "Swapping USDT for the Ethereum version." : "Preparing the swap.");
-          outcome = await signBridgeTransaction(account, tx);
-          hash = outcome.transaction.hash;
-        }
-        factoryAmount = outcome ? amountReceived(outcome, current.accountId, plan.bridgedToken) : 0n;
-        if (factoryAmount <= 0n) {
-          throw new Error("The swap did not return bridged USDT, so nothing was sent to Ethereum.");
-        }
-      }
-      const bridge = factoryAmount > 0n ? await api("/ethw/api/bridge", {
-        accountId: current.accountId,
-        recipient,
-        amount: amount.toString(),
-        bridgedAmount: factoryAmount.toString()
-      }) : plan;
-      if (!bridge.affordable || bridge.transactions.length === 0) {
-        throw new Error(
-          factoryAmount > 0n ? "The swap succeeded, but this wallet does not have enough NEAR left to bridge. The bridged USDT is in this wallet." : bridgeShortfall(bridge)
-        );
-      }
-      for (let index = 0; index < bridge.transactions.length; index += 1) {
-        const tx = bridge.transactions[index];
-        setStatus(index === bridge.transactions.length - 1 ? "Sending USDT to Ethereum." : "Preparing the bridge account.");
+      for (let index = 0; index < plan.transactions.length; index += 1) {
+        const tx = plan.transactions[index];
+        setStatus(tx.actions.some((action) => action.methodName === "ft_transfer") ? "Sending USDT to Ethereum." : "Preparing the bridge account.");
         const outcome = await signBridgeTransaction(account, tx);
         hash = outcome.transaction.hash;
+      }
+      if (plan.depositAddress && hash) {
+        try {
+          await api("/ethw/api/bridge/submitted", { depositAddress: plan.depositAddress, txHash: hash });
+        } catch {
+        }
       }
       return hash;
     }

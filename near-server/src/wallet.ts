@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { prepareEthereumBridge } from "./bridge";
+import { prepareEthereumBridge, submitIntentsDeposit } from "./bridge";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import {
@@ -67,7 +67,7 @@ const bridgeBody = z.object({
   accountId: nearAccountId,
   recipient: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/),
   amount: z.string().trim().regex(/^\d{1,40}$/),
-  bridgedAmount: z.string().trim().regex(/^\d{1,40}$/).optional(),
+  commit: z.boolean().optional(),
 });
 const releaseBody = z.object({ email });
 const reclaimBody = z.object({
@@ -192,6 +192,22 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
       const known = error as Error & { statusCode?: number };
       throw statusError(known.statusCode ?? 502, known.message || "could not prepare the bridge");
     }
+  });
+
+  app.post("/ethw/api/bridge/submitted", async (request) => {
+    const body = z
+      .object({
+        depositAddress: z.string().trim().regex(/^[a-f0-9]{64}$/),
+        txHash: z.string().trim().regex(/^[A-Za-z0-9]+$/),
+      })
+      .parse(request.body);
+    try {
+      await submitIntentsDeposit(body.depositAddress, body.txHash);
+    } catch (error) {
+      const known = error as Error & { statusCode?: number };
+      throw statusError(known.statusCode ?? 502, known.message || "could not confirm the bridge deposit");
+    }
+    return { ok: true };
   });
 
   app.post("/ethw/api/otp/send", async (request) => {
