@@ -3,6 +3,7 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prepareEthereumBridge, submitIntentsDeposit } from "./bridge";
+import { resolveEns } from "./ens";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import {
@@ -147,6 +148,16 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
     escrow: config.escrowAccount || null,
     mailReady: mailConfigured(config),
   }));
+
+  app.get("/ethw/api/ens", async (request) => {
+    const query = z.object({ q: z.string().trim().min(1).max(256) }).parse(request.query);
+    try {
+      return await resolveEns(config.ethRpcUrl, query.q);
+    } catch (error) {
+      const known = error as Error & { statusCode?: number };
+      throw statusError(known.statusCode ?? 502, known.message || "could not resolve ENS");
+    }
+  });
 
   app.get("/ethw/api/account", async (request) => {
     const query = z.object({ email }).parse(request.query);

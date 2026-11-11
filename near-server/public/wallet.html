@@ -686,7 +686,8 @@
     .kind-chip[data-kind="unknown"] { background: rgba(26, 20, 15, 0.06); color: var(--muted); }
     .kind-chip[data-kind="email"] { background: rgba(27, 143, 74, 0.12); color: var(--ok); }
     .kind-chip[data-kind="phone"] { background: rgba(37, 99, 235, 0.1); color: #1d4ed8; }
-    .kind-chip[data-kind="evm"] { background: rgba(224, 138, 43, 0.14); color: var(--amber-deep); }
+    .kind-chip[data-kind="evm"],
+    .kind-chip[data-kind="ens"] { background: rgba(224, 138, 43, 0.14); color: var(--amber-deep); }
     .kind-chip[data-kind="near"] { background: rgba(0, 0, 0, 0.08); color: #111; }
     #resolved { margin: 0.55rem 0 0; min-height: 1.3em; font-size: 0.9rem; }
     .toast {
@@ -838,13 +839,13 @@
         <h2>Send</h2>
       </div>
       <div class="panel">
-        <p class="hero-copy">Pay anyone with an email, a NEAR account, or an Ethereum address. Scan a QR code to fill the address.</p>
+        <p class="hero-copy">Pay anyone with an email, a NEAR account, an Ethereum address, or a .eth name. Scan a QR code to fill the address.</p>
         <p id="gas" class="muted"></p>
         <label>To
           <span class="recipient-wrap">
             <span class="recipient-field">
               <img id="recipient-avatar" width="38" height="38" alt="" hidden>
-              <input id="recipient" role="combobox" aria-autocomplete="list" aria-controls="recipient-suggest" aria-expanded="false" autocomplete="off" placeholder="email, +phone, or name.testnet">
+              <input id="recipient" role="combobox" aria-autocomplete="list" aria-controls="recipient-suggest" aria-expanded="false" autocomplete="off" placeholder="email, name.eth, or NEAR account">
               <button id="scan-address" class="scan-btn" type="button">Scan</button>
             </span>
             <ul id="recipient-suggest" class="suggest" role="listbox" hidden></ul>

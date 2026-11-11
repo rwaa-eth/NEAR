@@ -9,6 +9,7 @@ export interface Config {
   fingerprints: string[];
   nearNetwork: "mainnet" | "testnet";
   nearRpcUrl: string;
+  ethRpcUrl: string;
   faucetUrl: string;
   provisionAccounts: boolean;
   relayerAccount: string;
@@ -80,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     fingerprints,
     nearNetwork,
     nearRpcUrl,
+    ethRpcUrl: (env.ETH_RPC_URL ?? "").trim() || "https://1rpc.io/eth",
     faucetUrl: env.NEAR_FAUCET_URL ?? "https://helper.nearprotocol.com/account",
     provisionAccounts: env.NEAR_PROVISION_ACCOUNTS !== "false" && env.NEAR_PROVISION_ACCOUNTS !== "0",
     relayerAccount: env.NEAR_RELAYER_ACCOUNT ?? "",

@@ -13424,12 +13424,47 @@ var require_wallet = __commonJS({
     function isEvmAddress(value) {
       return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
     }
+    function isEnsName(value) {
+      return /^[^\s@]+\.eth$/i.test(value.trim());
+    }
+    var ensCache = /* @__PURE__ */ new Map();
+    var resolvedEns = null;
+    function shortAddress(address) {
+      return `${address.slice(0, 6)}\u2026${address.slice(-4)}`;
+    }
+    async function lookupEns(query) {
+      const key = query.trim().toLowerCase();
+      const cached = ensCache.get(key);
+      if (cached) return cached;
+      const found = await api(`/ethw/api/ens?q=${encodeURIComponent(query.trim())}`);
+      ensCache.set(key, found);
+      return found;
+    }
+    function ethereumLine(input, ens, detail) {
+      if (isEnsName(input) && ens.address) return `${input.trim()} is ${shortAddress(ens.address)}. ${detail}`;
+      if (ens.name) return `${ens.name}. ${detail}`;
+      if (detail === "Enter an amount to bridge USDT.") return "Ethereum mainnet. Enter an amount to bridge USDT.";
+      return detail;
+    }
+    async function ethereumPayee() {
+      const raw = recipientInput.value.trim();
+      if (isEvmAddress(raw)) return raw;
+      if (!isEnsName(raw)) throw new Error("Choose an Ethereum address or a .eth name.");
+      if (resolvedEns && resolvedEns.query.toLowerCase() === raw.toLowerCase() && isEvmAddress(resolvedEns.address)) {
+        return resolvedEns.address;
+      }
+      const ens = await lookupEns(raw);
+      if (!ens.address || !isEvmAddress(ens.address)) throw new Error("That ENS name has no Ethereum address.");
+      resolvedEns = { query: raw, address: ens.address };
+      return ens.address;
+    }
     function detectRecipient(raw) {
       const value = raw.trim();
       if (!value) return { kind: "empty", label: "Recipient", detail: "" };
       if (isEvmAddress(value)) return { kind: "evm", label: "Ethereum", detail: "" };
       if (value.includes("@")) return { kind: "email", label: "Email", detail: "", email: value.toLowerCase() };
       if (value.startsWith("+")) return { kind: "phone", label: "Phone", detail: "Phone payouts are not wired up yet." };
+      if (isEnsName(value)) return { kind: "ens", label: "ENS", detail: "" };
       if (/^[a-z0-9][a-z0-9._-]*\.(near|testnet)$/.test(value) || /^[0-9a-f]{64}$/.test(value)) {
         return { kind: "near", label: "NEAR account", detail: value, accountId: value };
       }
@@ -13531,7 +13566,7 @@ var require_wallet = __commonJS({
         setSendEnabled(false);
         return;
       }
-      if (detected.kind === "evm") {
+      if (detected.kind === "evm" || detected.kind === "ens") {
         recipientAvatar.hidden = true;
         if (config.network !== "mainnet") {
           resolvedEl.textContent = "Bridging to Ethereum is available on NEAR mainnet.";
@@ -13543,33 +13578,57 @@ var require_wallet = __commonJS({
           setSendEnabled(false, "Bridge");
           return;
         }
+        const query = recipientInput.value.trim();
+        resolvedEl.textContent = detected.kind === "ens" ? "Looking up that ENS name." : "Checking the Ethereum name.";
+        setSendEnabled(false, "Bridge");
+        let ens;
+        try {
+          ens = await lookupEns(query);
+        } catch (error) {
+          if (token !== recipientToken) return;
+          if (detected.kind === "ens") {
+            resolvedEns = null;
+            resolvedEl.textContent = explain(error);
+            setSendEnabled(false, "Bridge");
+            return;
+          }
+          ens = { direction: "reverse", name: null, address: query };
+        }
+        if (token !== recipientToken) return;
+        const address = detected.kind === "ens" ? ens.address ?? "" : query;
+        if (!isEvmAddress(address)) {
+          resolvedEns = null;
+          resolvedEl.textContent = "That ENS name has no Ethereum address.";
+          setSendEnabled(false, "Bridge");
+          return;
+        }
+        resolvedEns = { query, address };
         let amount;
         try {
           amount = parseAmount(amountInput.value, config.decimals);
         } catch {
-          resolvedEl.textContent = "Ethereum mainnet. Enter an amount to bridge USDT.";
+          resolvedEl.textContent = ethereumLine(query, ens, "Enter an amount to bridge USDT.");
           setSendEnabled(false, "Bridge");
           return;
         }
         if (!current) {
-          resolvedEl.textContent = "Open your wallet before bridging.";
+          resolvedEl.textContent = ethereumLine(query, ens, "Open your wallet before bridging.");
           setSendEnabled(false, "Bridge");
           return;
         }
-        resolvedEl.textContent = "Checking the bridge fee.";
-        setSendEnabled(false, "Bridge");
+        resolvedEl.textContent = ethereumLine(query, ens, "Checking the bridge fee.");
         try {
           const plan = await api("/ethw/api/bridge", {
             accountId: current.accountId,
-            recipient: recipientInput.value.trim(),
+            recipient: address,
             amount: amount.toString()
           });
           if (token !== recipientToken) return;
-          resolvedEl.textContent = plan.affordable ? bridgeFeeText(plan) : bridgeShortfall(plan);
+          resolvedEl.textContent = ethereumLine(query, ens, plan.affordable ? bridgeFeeText(plan) : bridgeShortfall(plan));
           setSendEnabled(plan.affordable, "Bridge");
         } catch (error) {
           if (token !== recipientToken) return;
-          resolvedEl.textContent = explain(error);
+          resolvedEl.textContent = ethereumLine(query, ens, explain(error));
           setSendEnabled(false, "Bridge");
         }
         return;
@@ -13695,10 +13754,12 @@ var require_wallet = __commonJS({
             txHash: hash
           });
           setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.accountId}. ${hash}`);
-        } else if (detected.kind === "evm") {
-          const hash = await bridgeToEthereum(account, recipientInput.value.trim(), amount);
+        } else if (detected.kind === "evm" || detected.kind === "ens") {
+          const recipient = await ethereumPayee();
+          const hash = await bridgeToEthereum(account, recipient, amount);
           const sentLabel = formatAmount(amount.toString(), config.decimals);
-          setStatus(`Bridging ${sentLabel} ${config.symbol} to ${recipientInput.value.trim()}. Ethereum receives it after NEAR Intents finishes. ${hash}`);
+          const destination = detected.kind === "ens" ? recipientInput.value.trim() : recipient;
+          setStatus(`Bridging ${sentLabel} ${config.symbol} to ${destination}. Ethereum receives it after NEAR Intents finishes. ${hash}`);
         } else {
           throw new Error("Choose an email, a NEAR account, or an Ethereum address.");
         }
@@ -13876,7 +13937,8 @@ var require_wallet = __commonJS({
       }, 300);
     });
     amountInput.addEventListener("input", () => {
-      if (detectRecipient(recipientInput.value).kind !== "evm") return;
+      const kind = detectRecipient(recipientInput.value).kind;
+      if (kind !== "evm" && kind !== "ens") return;
       window.clearTimeout(lookupTimer);
       lookupTimer = window.setTimeout(() => {
         resolveRecipient().catch((error) => setStatus(explain(error)));
