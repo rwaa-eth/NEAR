@@ -260,4 +260,20 @@ describe("NEAR wallet", () => {
     assert.equal(ready.json().accountId, "operator.testnet");
     await app.close();
   });
+
+  it("refuses an Ethereum bridge until the server is on mainnet", async () => {
+    const app = testApp();
+    const denied = await app.inject({
+      method: "POST",
+      url: "/ethw/api/bridge",
+      payload: {
+        accountId: "alice.testnet",
+        recipient: "0x1111111111111111111111111111111111111111",
+        amount: "1000000",
+      },
+    });
+    assert.equal(denied.statusCode, 400);
+    assert.match(denied.json().error, /mainnet/);
+    await app.close();
+  });
 });

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { prepareEthereumBridge } from "./bridge";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import {
@@ -62,6 +63,12 @@ const transferBody = z
     message: "Choose a recipient.",
   });
 
+const bridgeBody = z.object({
+  accountId: nearAccountId,
+  recipient: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/),
+  amount: z.string().trim().regex(/^\d{1,40}$/),
+  bridgedAmount: z.string().trim().regex(/^\d{1,40}$/).optional(),
+});
 const releaseBody = z.object({ email });
 const reclaimBody = z.object({
   senderEmail: email,
@@ -175,6 +182,16 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
     if (!config.operatorAccount) throw statusError(503, "Set NEAR_OPERATOR_ACCOUNT on the server");
     await ensureTokenStorage(config, config.operatorAccount);
     return { accountId: config.operatorAccount };
+  });
+
+  app.post("/ethw/api/bridge", async (request) => {
+    const body = bridgeBody.parse(request.body);
+    try {
+      return await prepareEthereumBridge(config, body);
+    } catch (error) {
+      const known = error as Error & { statusCode?: number };
+      throw statusError(known.statusCode ?? 502, known.message || "could not prepare the bridge");
+    }
   });
 
   app.post("/ethw/api/otp/send", async (request) => {

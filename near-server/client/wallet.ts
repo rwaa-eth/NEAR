@@ -1,5 +1,5 @@
 import { keccak_256 } from "@noble/hashes/sha3";
-import { connect, keyStores, KeyPair } from "near-api-js";
+import { connect, keyStores, KeyPair, transactions } from "near-api-js";
 import QRCode from "qrcode";
 import { mountAddressScanner } from "./scan";
 
@@ -904,7 +904,7 @@ function isEvmAddress(value: string): boolean {
 function detectRecipient(raw: string): Detected {
   const value = raw.trim();
   if (!value) return { kind: "empty", label: "Recipient", detail: "" };
-  if (isEvmAddress(value)) return { kind: "evm", label: "EVM", detail: "" };
+  if (isEvmAddress(value)) return { kind: "evm", label: "Ethereum", detail: "" };
   if (value.includes("@")) return { kind: "email", label: "Email", detail: "", email: value.toLowerCase() };
   if (value.startsWith("+")) return { kind: "phone", label: "Phone", detail: "Phone payouts are not wired up yet." };
   if (/^[a-z0-9][a-z0-9._-]*\.(near|testnet)$/.test(value) || /^[0-9a-f]{64}$/.test(value)) {
@@ -984,6 +984,53 @@ function emailSendNotice(email: string, escrowed: boolean, amountText: string): 
   link.remove();
 }
 
+type BridgeTransaction = {
+  receiverId: string;
+  actions: Array<{ methodName: string; args: string; gas: string; deposit: string }>;
+};
+
+type BridgePlan = {
+  nativeFee: string;
+  tokenFee: string;
+  receiveAmount: string;
+  swapOut: string;
+  bridgedToken: string;
+  affordable: boolean;
+  swapTransactions: BridgeTransaction[];
+  transactions: BridgeTransaction[];
+};
+
+type SignedOutcome = {
+  transaction: { hash: string };
+  receipts_outcome?: Array<{ outcome?: { executor_id?: string; logs?: string[] } }>;
+};
+
+function bytesFromBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function bridgeShortfall(plan: BridgePlan): string {
+  if (plan.nativeFee !== "0") {
+    return `The bridge fee is ${formatAmount(plan.nativeFee, 24, 4)} NEAR. This wallet does not have enough NEAR to pay it.`;
+  }
+  return "This wallet needs a little NEAR left to pay the network fee.";
+}
+
+function bridgeFeeText(plan: BridgePlan): string {
+  const fees = [
+    plan.nativeFee !== "0" ? `${formatAmount(plan.nativeFee, 24, 4)} NEAR` : "",
+    plan.tokenFee !== "0" ? `${formatAmount(plan.tokenFee, config.decimals, 4)} ${config.symbol}` : "",
+  ].filter(Boolean);
+  const fee = fees.join(" and ");
+  const receive = formatAmount(plan.receiveAmount, config.decimals, 4);
+  const charge = fee ? `a ${fee} bridge fee` : "no relayer fee";
+  const lead = plan.swapTransactions.length > 0 ? `Swap into bridged USDT, then ${charge}` : charge.charAt(0).toUpperCase() + charge.slice(1);
+  return `${lead}. They receive ${receive} ${config.symbol} on Ethereum.`;
+}
+
 function setSendEnabled(enabled: boolean, label = "Send"): void {
   sendButton.disabled = !enabled;
   sendButton.textContent = label;
@@ -1002,8 +1049,47 @@ async function resolveRecipient(): Promise<void> {
   }
   if (detected.kind === "evm") {
     recipientAvatar.hidden = true;
-    resolvedEl.textContent = "";
-    setSendEnabled(false);
+    if (config.network !== "mainnet") {
+      resolvedEl.textContent = "Bridging to Ethereum is available on NEAR mainnet.";
+      setSendEnabled(false, "Bridge");
+      return;
+    }
+    if (!config.token) {
+      resolvedEl.textContent = "USDT is not configured on this server.";
+      setSendEnabled(false, "Bridge");
+      return;
+    }
+    let amount: bigint;
+    try {
+      amount = parseAmount(amountInput.value, config.decimals);
+    } catch {
+      resolvedEl.textContent = "Ethereum mainnet. Enter an amount to bridge USDT.";
+      setSendEnabled(false, "Bridge");
+      return;
+    }
+    if (!current) {
+      resolvedEl.textContent = "Open your wallet before bridging.";
+      setSendEnabled(false, "Bridge");
+      return;
+    }
+    resolvedEl.textContent = "Checking the bridge fee.";
+    setSendEnabled(false, "Bridge");
+    try {
+      const plan = await api<BridgePlan>("/ethw/api/bridge", {
+        accountId: current.accountId,
+        recipient: recipientInput.value.trim(),
+        amount: amount.toString(),
+      });
+      if (token !== recipientToken) return;
+      resolvedEl.textContent = plan.affordable
+        ? bridgeFeeText(plan)
+        : bridgeShortfall(plan);
+      setSendEnabled(plan.affordable, "Bridge");
+    } catch (error) {
+      if (token !== recipientToken) return;
+      resolvedEl.textContent = explain(error);
+      setSendEnabled(false, "Bridge");
+    }
     return;
   }
   if (detected.kind === "phone" || detected.kind === "unknown") {
@@ -1057,7 +1143,9 @@ async function confirmSendPasskey(): Promise<void> {
 async function sendToken(): Promise<void> {
   if (!current) return;
   const detected = detectRecipient(recipientInput.value);
-  if (detected.kind === "evm") return;
+  if (detected.kind === "empty" || detected.kind === "phone" || detected.kind === "unknown") {
+    throw new Error(detected.kind === "phone" ? "Phone payouts are not wired up yet." : "Choose an email, a NEAR account, or an Ethereum address.");
+  }
   const amount = parseAmount(amountInput.value, config.decimals);
   sendButton.disabled = true;
   sendWrap.classList.add("busy");
@@ -1132,8 +1220,12 @@ async function sendToken(): Promise<void> {
         txHash: hash,
       });
       setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.accountId}. ${hash}`);
+    } else if (detected.kind === "evm") {
+      const hash = await bridgeToEthereum(account, recipientInput.value.trim(), amount);
+      const sentLabel = formatAmount(amount.toString(), config.decimals);
+      setStatus(`Bridging ${sentLabel} ${config.symbol} to ${recipientInput.value.trim()}. Ethereum receives it after the relayer finishes. ${hash}`);
     } else {
-      throw new Error("Choose an email or a NEAR account.");
+      throw new Error("Choose an email, a NEAR account, or an Ethereum address.");
     }
     await refreshBalances();
     await loadEscrow();
@@ -1146,8 +1238,106 @@ async function sendToken(): Promise<void> {
   } finally {
     sendWrap.classList.remove("busy");
     sendButton.removeAttribute("aria-busy");
-    sendButton.disabled = false;
+    resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
   }
+}
+
+function amountReceived(outcome: SignedOutcome, accountId: string, token: string): bigint {
+  let received = 0n;
+  for (const receipt of outcome.receipts_outcome ?? []) {
+    if (receipt.outcome?.executor_id !== token) continue;
+    for (const log of receipt.outcome.logs ?? []) {
+      if (!log.startsWith("EVENT_JSON:")) continue;
+      try {
+        const event = JSON.parse(log.slice("EVENT_JSON:".length)) as {
+          event?: string;
+          data?: Array<{ new_owner_id?: string; amount?: string }>;
+        };
+        if (event.event !== "ft_transfer" || !Array.isArray(event.data)) continue;
+        for (const row of event.data) {
+          if (row.new_owner_id === accountId && row.amount) received += BigInt(row.amount);
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  if (received > 0n) return received;
+  const pattern = new RegExp(`for (\\d+) ${token.replace(/[.]/g, "\\.")}`);
+  for (const receipt of outcome.receipts_outcome ?? []) {
+    for (const log of receipt.outcome?.logs ?? []) {
+      const match = log.match(pattern);
+      if (match?.[1]) return BigInt(match[1]);
+    }
+  }
+  return 0n;
+}
+
+async function signBridgeTransaction(
+  account: Awaited<ReturnType<typeof nearAccount>>,
+  tx: BridgeTransaction,
+): Promise<SignedOutcome> {
+  const outcome = await account.signAndSendTransaction({
+    receiverId: tx.receiverId,
+    actions: tx.actions.map((action) =>
+      transactions.functionCall(action.methodName, bytesFromBase64(action.args), BigInt(action.gas), BigInt(action.deposit)),
+    ),
+  });
+  return outcome as SignedOutcome;
+}
+
+async function bridgeToEthereum(
+  account: Awaited<ReturnType<typeof nearAccount>>,
+  recipient: string,
+  amount: bigint,
+): Promise<string> {
+  if (!current) throw new Error("Open your wallet first.");
+  setStatus("Preparing the bridge.");
+  const plan = await api<BridgePlan>("/ethw/api/bridge", {
+    accountId: current.accountId,
+    recipient,
+    amount: amount.toString(),
+  });
+  if (!plan.affordable || (plan.swapTransactions.length === 0 && plan.transactions.length === 0)) {
+    throw new Error(bridgeShortfall(plan));
+  }
+  let factoryAmount = 0n;
+  let hash = "";
+  if (plan.swapTransactions.length > 0) {
+    let outcome: SignedOutcome | null = null;
+    for (const tx of plan.swapTransactions) {
+      setStatus(tx.actions.some((action) => action.methodName === "ft_transfer_call") ? "Swapping USDT for the Ethereum version." : "Preparing the swap.");
+      outcome = await signBridgeTransaction(account, tx);
+      hash = outcome.transaction.hash;
+    }
+    factoryAmount = outcome ? amountReceived(outcome, current.accountId, plan.bridgedToken) : 0n;
+    if (factoryAmount <= 0n) {
+      throw new Error("The swap did not return bridged USDT, so nothing was sent to Ethereum.");
+    }
+  }
+  const bridge =
+    factoryAmount > 0n
+      ? await api<BridgePlan>("/ethw/api/bridge", {
+          accountId: current.accountId,
+          recipient,
+          amount: amount.toString(),
+          bridgedAmount: factoryAmount.toString(),
+        })
+      : plan;
+  if (!bridge.affordable || bridge.transactions.length === 0) {
+    throw new Error(
+      factoryAmount > 0n
+        ? "The swap succeeded, but this wallet does not have enough NEAR left to bridge. The bridged USDT is in this wallet."
+        : bridgeShortfall(bridge),
+    );
+  }
+  for (let index = 0; index < bridge.transactions.length; index += 1) {
+    const tx = bridge.transactions[index]!;
+    setStatus(index === bridge.transactions.length - 1 ? "Sending USDT to Ethereum." : "Preparing the bridge account.");
+    const outcome = await signBridgeTransaction(account, tx);
+    hash = outcome.transaction.hash;
+  }
+  return hash;
 }
 
 const COLLECT_ATTEMPTS = 5;
@@ -1272,6 +1462,13 @@ recipientInput.addEventListener("input", () => {
     resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
   }, 300);
 });
+amountInput.addEventListener("input", () => {
+  if (detectRecipient(recipientInput.value).kind !== "evm") return;
+  window.clearTimeout(lookupTimer);
+  lookupTimer = window.setTimeout(() => {
+    resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
+  }, 300);
+});
 recipientInput.addEventListener("keydown", (event) => {
   if (suggestList.hidden) return;
   if (event.key === "ArrowDown") {
@@ -1295,12 +1492,7 @@ sendButton.addEventListener("click", () => {
 mountAddressScanner((payee) => {
   recipientInput.value = payee;
   recipientInput.dispatchEvent(new Event("input"));
-  if (isEvmAddress(payee)) {
-    setSendEnabled(false);
-    setStatus("Bridging to EVM");
-    return;
-  }
-  setStatus("Address scanned.");
+  setStatus(isEvmAddress(payee) ? "Ethereum address scanned." : "Address scanned.");
 });
 
 void api<Config>("/ethw/api/config")
