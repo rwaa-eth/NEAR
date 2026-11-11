@@ -158,7 +158,7 @@ async function buildSwap(config: Config, accountId: string, amount: bigint, minO
       "register_tokens",
       { token_ids: [WALLET_USDT_ACCOUNT, ETH_USDT_ACCOUNT] },
       CALL_GAS,
-      0n,
+      1n,
     ),
   );
   if (!(await hasStorage(config.nearRpcUrl, ETH_USDT_ACCOUNT, accountId))) {
