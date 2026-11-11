@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { chooseBridgeFee, formatNear, minSwapOut } from "../src/bridge";
+import { chooseBridgeFee, formatNear, minSwapOut, unregisteredRefTokens } from "../src/bridge";
 
 describe("bridge amounts", () => {
   it("shows a NEAR fee without trailing zeros", () => {
@@ -27,5 +27,14 @@ describe("bridge amounts", () => {
   it("keeps one percent of room on the USDT swap", () => {
     assert.equal(minSwapOut(499_363n), 494_369n);
     assert.equal(minSwapOut(0n), 0n);
+  });
+
+  it("skips Rhea registration once both USDT tokens are present", () => {
+    const deposits = {
+      "usdt.tether-token.near": "0",
+      "dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near": "0",
+    };
+    assert.deepEqual(unregisteredRefTokens(deposits, Object.keys(deposits)), []);
+    assert.deepEqual(unregisteredRefTokens({}, ["usdt.tether-token.near"]), ["usdt.tether-token.near"]);
   });
 });

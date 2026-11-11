@@ -6,14 +6,15 @@ export const ETH_USDT_ACCOUNT = "dac17f958d2ee523a2206206994597c13d831ec7.factor
 const WALLET_USDT_ACCOUNT = "usdt.tether-token.near";
 const REF_EXCHANGE = "v2.ref-finance.near";
 const REF_POOL = 3689;
-const SWAP_GAS = 180_000_000_000_000n;
-const CALL_GAS = 30_000_000_000_000n;
-/** Headroom above Ref's 0.00102 NEAR minimum so both tokens can be registered. */
-const REF_STORAGE_DEPOSIT = 5_000_000_000_000_000_000_000n;
+const SWAP_GAS = 80_000_000_000_000n;
+const CALL_GAS = 15_000_000_000_000n;
+/** A completed registration of both USDT tokens used 0.00398 NEAR. */
+const REF_STORAGE_DEPOSIT = 4_200_000_000_000_000_000_000n;
 const TOKEN_STORAGE_DEPOSIT = 1_250_000_000_000_000_000_000n;
-/** Largest attached gas on the bridge transfer, plus earlier burn from the swap. */
-const SWAP_PATH_GAS = 35_000_000_000_000_000_000_000n;
-const BRIDGE_GAS = 30_000_000_000_000_000_000_000n;
+/** Live transfers burn about 10–30 TGas. 100 TGas is the allowance the wallet must hold. */
+const BRIDGE_TRANSFER_GAS = 100_000_000_000_000n;
+const BRIDGE_GAS = 10_000_000_000_000_000_000_000n;
+const SWAP_PATH_GAS = 15_000_000_000_000_000_000_000n;
 
 export type BridgeAction = {
   methodName: string;
@@ -128,6 +129,12 @@ async function hasStorage(rpcUrl: string, contractId: string, accountId: string)
   return balance != null;
 }
 
+/** Tokens absent from a Rhea `get_deposits` map still need `register_tokens`. A zero balance counts as registered. */
+export function unregisteredRefTokens(deposits: Record<string, string> | null | undefined, tokens: string[]): string[] {
+  const present = deposits ?? {};
+  return tokens.filter((token) => !Object.prototype.hasOwnProperty.call(present, token));
+}
+
 async function quoteRefSwap(rpcUrl: string, amount: bigint): Promise<bigint> {
   const pool = (await callView(rpcUrl, REF_EXCHANGE, "get_pool", { pool_id: REF_POOL })) as {
     token_account_ids?: string[];
@@ -152,15 +159,13 @@ async function buildSwap(config: Config, accountId: string, amount: bigint, minO
       callTransaction(REF_EXCHANGE, "storage_deposit", { account_id: accountId }, CALL_GAS, REF_STORAGE_DEPOSIT),
     );
   }
-  transactions.push(
-    callTransaction(
-      REF_EXCHANGE,
-      "register_tokens",
-      { token_ids: [WALLET_USDT_ACCOUNT, ETH_USDT_ACCOUNT] },
-      CALL_GAS,
-      1n,
-    ),
-  );
+  const deposits = (await callView(config.nearRpcUrl, REF_EXCHANGE, "get_deposits", { account_id: accountId })) as
+    | Record<string, string>
+    | null;
+  const missing = unregisteredRefTokens(deposits, [WALLET_USDT_ACCOUNT, ETH_USDT_ACCOUNT]);
+  if (missing.length > 0) {
+    transactions.push(callTransaction(REF_EXCHANGE, "register_tokens", { token_ids: missing }, CALL_GAS, 1n));
+  }
   if (!(await hasStorage(config.nearRpcUrl, ETH_USDT_ACCOUNT, accountId))) {
     transactions.push(
       callTransaction(ETH_USDT_ACCOUNT, "storage_deposit", { account_id: accountId }, CALL_GAS, TOKEN_STORAGE_DEPOSIT),
@@ -253,7 +258,15 @@ async function buildBridge(
   const tokenReady = await nearBuilder.isTokenStorageRegistered(ETH_USDT_ACCOUNT);
   if (!tokenReady) transactions.push(await nearBuilder.buildTokenStorageDeposit(ETH_USDT_ACCOUNT, input.accountId));
   transactions.push(nearBuilder.buildTransfer(validated, input.accountId));
-  return { nativeFee, tokenFee, transactions: transactions.map(encodeTransaction) };
+  const encoded = transactions.map(encodeTransaction).map((tx) => ({
+    ...tx,
+    actions: tx.actions.map((action) =>
+      action.methodName === "ft_transfer_call" && BigInt(action.gas) > BRIDGE_TRANSFER_GAS
+        ? { ...action, gas: BRIDGE_TRANSFER_GAS.toString() }
+        : action,
+    ),
+  }));
+  return { nativeFee, tokenFee, transactions: encoded };
 }
 
 export async function prepareEthereumBridge(config: Config, input: BridgeInput): Promise<BridgePlan> {
