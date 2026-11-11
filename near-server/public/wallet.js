@@ -12695,6 +12695,9 @@ var require_wallet = __commonJS({
     var current = null;
     var verified = null;
     var lookupTimer = 0;
+    var setupLookupTimer = 0;
+    var accountLookup = 0;
+    var knownAccount = false;
     var suggestIndex = -1;
     var otpBusy = false;
     var otpAttempted = "";
@@ -12706,8 +12709,31 @@ var require_wallet = __commonJS({
     var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
     function syncSetupButtons() {
       const ok = EMAIL_PATTERN.test(emailInput.value.trim());
-      openButton.disabled = !ok;
+      const known = ok && knownAccount;
+      sendCodeButton.hidden = known;
+      openWrap.hidden = !known;
+      openButton.disabled = !known;
       sendCodeButton.disabled = !ok || !config.mailReady;
+    }
+    function scheduleAccountLookup() {
+      knownAccount = false;
+      syncSetupButtons();
+      window.clearTimeout(setupLookupTimer);
+      const email = emailInput.value.trim().toLowerCase();
+      if (!EMAIL_PATTERN.test(email)) return;
+      const generation = ++accountLookup;
+      setupLookupTimer = window.setTimeout(() => {
+        lookupKnownAccount(email, generation).catch((error) => {
+          if (generation !== accountLookup) return;
+          setStatus(explain(error));
+        });
+      }, 300);
+    }
+    async function lookupKnownAccount(email, generation) {
+      const found = await api(`/ethw/api/account?email=${encodeURIComponent(email)}`);
+      if (generation !== accountLookup || emailInput.value.trim().toLowerCase() !== email) return;
+      knownAccount = found.registered;
+      syncSetupButtons();
     }
     var toastTimer = 0;
     function setStatus(message) {
@@ -13796,7 +13822,12 @@ var require_wallet = __commonJS({
       openWallet().catch((error) => setStatus(explain(error)));
     });
     emailInput.addEventListener("input", () => {
-      syncSetupButtons();
+      if (!otpBox.hidden) {
+        otpBox.hidden = true;
+        verified = null;
+        otpInput.value = "";
+      }
+      scheduleAccountLookup();
     });
     collectButton.addEventListener("click", () => {
       collectEscrow().catch((error) => setStatus(explain(error)));
@@ -13887,8 +13918,17 @@ var require_wallet = __commonJS({
       const saved = window.localStorage.getItem(EMAIL_KEY);
       if (saved) {
         emailInput.value = saved;
-        syncSetupButtons();
-        setStatus("Press Open wallet to sign in.");
+        const email = saved.trim().toLowerCase();
+        if (EMAIL_PATTERN.test(email)) {
+          const generation = ++accountLookup;
+          lookupKnownAccount(email, generation).then(() => {
+            if (generation === accountLookup && knownAccount) setStatus("Press Open wallet to sign in.");
+          }).catch((error) => {
+            if (generation === accountLookup) setStatus(explain(error));
+          });
+        } else {
+          syncSetupButtons();
+        }
       }
     }).catch((error) => setStatus(explain(error)));
   }

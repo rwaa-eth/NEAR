@@ -125,6 +125,9 @@ let config: Config = {
 let current: { email: string; accountId: string; secret: string } | null = null;
 let verified: { email: string; emailToken: string } | null = null;
 let lookupTimer = 0;
+let setupLookupTimer = 0;
+let accountLookup = 0;
+let knownAccount = false;
 let suggestIndex = -1;
 let otpBusy = false;
 let otpAttempted = "";
@@ -138,8 +141,33 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function syncSetupButtons(): void {
   const ok = EMAIL_PATTERN.test(emailInput.value.trim());
-  openButton.disabled = !ok;
+  const known = ok && knownAccount;
+  sendCodeButton.hidden = known;
+  openWrap.hidden = !known;
+  openButton.disabled = !known;
   sendCodeButton.disabled = !ok || !config.mailReady;
+}
+
+function scheduleAccountLookup(): void {
+  knownAccount = false;
+  syncSetupButtons();
+  window.clearTimeout(setupLookupTimer);
+  const email = emailInput.value.trim().toLowerCase();
+  if (!EMAIL_PATTERN.test(email)) return;
+  const generation = ++accountLookup;
+  setupLookupTimer = window.setTimeout(() => {
+    lookupKnownAccount(email, generation).catch((error: unknown) => {
+      if (generation !== accountLookup) return;
+      setStatus(explain(error));
+    });
+  }, 300);
+}
+
+async function lookupKnownAccount(email: string, generation: number): Promise<void> {
+  const found = await api<{ registered: boolean }>(`/ethw/api/account?email=${encodeURIComponent(email)}`);
+  if (generation !== accountLookup || emailInput.value.trim().toLowerCase() !== email) return;
+  knownAccount = found.registered;
+  syncSetupButtons();
 }
 
 let toastTimer = 0;
@@ -1361,7 +1389,12 @@ openButton.addEventListener("click", () => {
   openWallet().catch((error: unknown) => setStatus(explain(error)));
 });
 emailInput.addEventListener("input", () => {
-  syncSetupButtons();
+  if (!otpBox.hidden) {
+    otpBox.hidden = true;
+    verified = null;
+    otpInput.value = "";
+  }
+  scheduleAccountLookup();
 });
 collectButton.addEventListener("click", () => {
   collectEscrow().catch((error: unknown) => setStatus(explain(error)));
@@ -1454,8 +1487,19 @@ void api<Config>("/ethw/api/config")
     const saved = window.localStorage.getItem(EMAIL_KEY);
     if (saved) {
       emailInput.value = saved;
-      syncSetupButtons();
-      setStatus("Press Open wallet to sign in.");
+      const email = saved.trim().toLowerCase();
+      if (EMAIL_PATTERN.test(email)) {
+        const generation = ++accountLookup;
+        lookupKnownAccount(email, generation)
+          .then(() => {
+            if (generation === accountLookup && knownAccount) setStatus("Press Open wallet to sign in.");
+          })
+          .catch((error: unknown) => {
+            if (generation === accountLookup) setStatus(explain(error));
+          });
+      } else {
+        syncSetupButtons();
+      }
     }
   })
   .catch((error: unknown) => setStatus(explain(error)));
