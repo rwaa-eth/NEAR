@@ -3,6 +3,7 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prepareEthereumBridge, submitIntentsDeposit } from "./bridge";
+import { listBridgeHistory, mergeHistory, recordBridgeSend, refreshBridgeSends } from "./bridgeHistory";
 import { resolveEns } from "./ens";
 import type { Config } from "./config";
 import type { Db } from "./db";
@@ -206,18 +207,44 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
   });
 
   app.post("/ethw/api/bridge/submitted", async (request) => {
+    if (!config.tokenAccount) throw statusError(400, "Set NEAR_TOKEN_ACCOUNT on the server");
     const body = z
       .object({
+        senderEmail: email,
+        recipient: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/),
+        label: z.string().trim().min(1).max(256).optional(),
         depositAddress: z.string().trim().regex(/^[a-f0-9]{64}$/),
         txHash: z.string().trim().regex(/^[A-Za-z0-9]+$/),
       })
       .parse(request.body);
+    const sender = readAccount(db, body.senderEmail);
+    if (!sender) throw statusError(404, "sender email is not registered");
+    let outcome;
+    try {
+      outcome = await fetchTx(config.nearRpcUrl, body.txHash, sender.accountId);
+    } catch (error) {
+      throw statusError(502, error instanceof Error ? error.message : "could not read the bridge transfer");
+    }
+    if (outcome.transaction?.signer_id !== sender.accountId) {
+      throw statusError(400, "that transaction was not signed by this wallet");
+    }
+    const parsed = transfersFromOutcome(outcome, config.tokenAccount, sender.accountId, body.depositAddress);
+    if (parsed.length === 0) throw statusError(400, "that transaction does not fund this bridge");
+    recordBridgeSend(db, {
+      senderEmail: sender.email,
+      senderAddress: sender.accountId,
+      recipient: body.recipient,
+      label: body.label?.trim() || body.recipient,
+      amount: parsed[0]!.amount,
+      txHash: body.txHash,
+      depositAddress: body.depositAddress,
+    });
     try {
       await submitIntentsDeposit(body.depositAddress, body.txHash);
-    } catch (error) {
-      const known = error as Error & { statusCode?: number };
-      throw statusError(known.statusCode ?? 502, known.message || "could not confirm the bridge deposit");
+    } catch {
+      // The transfer is already on NEAR. Intents notices the deposit on its own.
     }
+    await refreshBridgeSends(db);
     return { ok: true };
   });
 
@@ -312,7 +339,9 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
 
   app.get("/ethw/api/escrow", async (request) => {
     const query = z.object({ email }).parse(request.query);
-    return listEscrow(db, query.email);
+    await refreshBridgeSends(db);
+    const escrow = listEscrow(db, query.email);
+    return { ...escrow, history: mergeHistory(escrow.history, listBridgeHistory(db, query.email)) };
   });
 
   app.post("/ethw/api/transfer", async (request) => {

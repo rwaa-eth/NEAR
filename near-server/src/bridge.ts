@@ -122,6 +122,23 @@ async function requestQuote(input: BridgeInput, commit: boolean): Promise<Intent
   return body.quote;
 }
 
+export async function fetchIntentsStatus(depositAddress: string): Promise<string> {
+  const response = await fetch(`${INTENTS_API}/v0/status?depositAddress=${encodeURIComponent(depositAddress)}`);
+  const body = (await response.json().catch(() => ({}))) as { status?: string; message?: string };
+  if (!response.ok || !body.status) {
+    throw bridgeError(response.status === 404 ? 404 : 502, body.message || "could not read the bridge status");
+  }
+  return body.status;
+}
+
+/** The status API reports `SUCCESS` when the Ethereum transfer is done. */
+export function bridgeRecordStatus(apiStatus: string): { status: string; done: boolean; complete: boolean } {
+  const raw = apiStatus.trim().toUpperCase();
+  if (raw === "SUCCESS" || raw === "COMPLETED") return { status: "completed", done: true, complete: true };
+  if (raw === "REFUNDED" || raw === "FAILED") return { status: raw.toLowerCase(), done: true, complete: false };
+  return { status: raw.toLowerCase() || "processing", done: false, complete: false };
+}
+
 export async function submitIntentsDeposit(depositAddress: string, txHash: string): Promise<void> {
   const response = await fetch(`${INTENTS_API}/v0/deposit/submit`, {
     method: "POST",

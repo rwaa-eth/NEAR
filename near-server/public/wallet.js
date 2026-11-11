@@ -12703,6 +12703,7 @@ var require_wallet = __commonJS({
     var otpAttempted = "";
     var inviteAttempted = "";
     var balanceTimer = 0;
+    var bridgePoll = 0;
     var balanceInFlight = false;
     var recipientToken = 0;
     var gravatarCache = /* @__PURE__ */ new Map();
@@ -13011,6 +13012,26 @@ var require_wallet = __commonJS({
       window.clearInterval(balanceTimer);
       balanceTimer = 0;
     }
+    function stopBridgePoll() {
+      window.clearInterval(bridgePoll);
+      bridgePoll = 0;
+    }
+    function syncBridgePoll(rows) {
+      const open = rows.some((row) => row.kind === "bridge" && !row.done);
+      if (!open) {
+        stopBridgePoll();
+        return;
+      }
+      if (bridgePoll) return;
+      bridgePoll = window.setInterval(() => {
+        loadEscrow().catch(() => void 0);
+      }, 1e4);
+    }
+    function bridgeStatusLabel(status) {
+      if (status === "completed") return "Complete";
+      const words = status.split("_").join(" ");
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    }
     function partyLabel(email, accountId) {
       return email || accountId;
     }
@@ -13079,6 +13100,12 @@ var require_wallet = __commonJS({
           link.textContent = " tx";
           item.append(link);
         }
+        if (row.kind === "bridge" && row.status) {
+          const status = document.createElement("span");
+          status.className = "bridge-status";
+          status.textContent = ` \xB7 ${bridgeStatusLabel(row.status)}`;
+          item.append(status);
+        }
         historyList.append(item);
       }
     }
@@ -13134,6 +13161,7 @@ var require_wallet = __commonJS({
         return `${formatAmount(row.amount, config.decimals)} ${config.symbol} from ${partyLabel(row.senderEmail, row.senderAddress)}`;
       });
       renderHistory(result.history);
+      syncBridgePoll(result.history);
       outgoingSection.hidden = result.outgoing.length === 0;
       if (result.outgoing.length > 0) {
         renderRows(
@@ -13365,6 +13393,7 @@ var require_wallet = __commonJS({
     function logout() {
       current = null;
       stopBalanceRefresh();
+      stopBridgePoll();
       window.localStorage.removeItem(EMAIL_KEY);
       accountMenu.hidden = true;
       show("setup");
@@ -13440,11 +13469,17 @@ var require_wallet = __commonJS({
       ensCache.set(key, found);
       return found;
     }
+    function ethereumIdentity(input, ens) {
+      const typed = input.trim();
+      if (isEnsName(typed) && ens.address) return `${typed} is ${shortAddress(ens.address)}`;
+      if (isEvmAddress(typed) && ens.name) return `${ens.name} is ${shortAddress(typed)}`;
+      if (isEvmAddress(typed)) return shortAddress(typed);
+      return "";
+    }
     function ethereumLine(input, ens, detail) {
-      if (isEnsName(input) && ens.address) return `${input.trim()} is ${shortAddress(ens.address)}. ${detail}`;
-      if (ens.name) return `${ens.name}. ${detail}`;
-      if (detail === "Enter an amount to bridge USDT.") return "Ethereum mainnet. Enter an amount to bridge USDT.";
-      return detail;
+      const who = ethereumIdentity(input, ens);
+      if (!who) return detail;
+      return `${who}. ${detail}`;
     }
     async function ethereumPayee() {
       const raw = recipientInput.value.trim();
@@ -13544,12 +13579,9 @@ var require_wallet = __commonJS({
       return "This wallet needs a little NEAR left to pay the network fee.";
     }
     function bridgeFeeText(plan) {
-      const fee = plan.tokenFee !== "0" ? `${formatAmount(plan.tokenFee, config.decimals, 4)} ${config.symbol}` : "";
+      const fee = `${formatAmount(plan.tokenFee, config.decimals, 4)} ${config.symbol}`;
       const receive = formatAmount(plan.receiveAmount, config.decimals, 4);
-      const charge = fee ? `A ${fee} fee` : "No fee";
-      const seconds = plan.timeEstimate || 30;
-      const when = seconds >= 90 ? `${Math.round(seconds / 60)} minutes` : `${seconds} seconds`;
-      return `${charge}. They receive ${receive} ${config.symbol} on Ethereum in about ${when}.`;
+      return `Bridging fee is ${fee}. Recipient will receive ${receive} ${config.symbol}, expected time 5-15 minutes.`;
     }
     function setSendEnabled(enabled, label = "Send") {
       sendButton.disabled = !enabled;
@@ -13756,10 +13788,11 @@ var require_wallet = __commonJS({
           setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.accountId}. ${hash}`);
         } else if (detected.kind === "evm" || detected.kind === "ens") {
           const recipient = await ethereumPayee();
-          const hash = await bridgeToEthereum(account, recipient, amount);
-          const sentLabel = formatAmount(amount.toString(), config.decimals);
           const destination = detected.kind === "ens" ? recipientInput.value.trim() : recipient;
-          setStatus(`Bridging ${sentLabel} ${config.symbol} to ${destination}. Ethereum receives it after NEAR Intents finishes. ${hash}`);
+          const sent = await bridgeToEthereum(account, recipient, amount, destination);
+          const sentLabel = formatAmount(amount.toString(), config.decimals);
+          const recorded = sent.recorded ? "" : " It will show in history once the transfer can be read.";
+          setStatus(`Bridging ${sentLabel} ${config.symbol} to ${destination}. Ethereum receives it after NEAR Intents finishes.${recorded} ${sent.hash}`);
         } else {
           throw new Error("Choose an email, a NEAR account, or an Ethereum address.");
         }
@@ -13786,7 +13819,20 @@ var require_wallet = __commonJS({
       });
       return outcome;
     }
-    async function bridgeToEthereum(account, recipient, amount) {
+    async function rememberBridge(body) {
+      let last;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          await api("/ethw/api/bridge/submitted", body);
+          return;
+        } catch (error) {
+          last = error;
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        }
+      }
+      throw last instanceof Error ? last : new Error("could not save the bridge");
+    }
+    async function bridgeToEthereum(account, recipient, amount, label) {
       if (!current) throw new Error("Open your wallet first.");
       setStatus("Preparing the bridge.");
       const plan = await api("/ethw/api/bridge", {
@@ -13805,13 +13851,22 @@ var require_wallet = __commonJS({
         const outcome = await signBridgeTransaction(account, tx);
         hash = outcome.transaction.hash;
       }
+      let recorded = false;
       if (plan.depositAddress && hash) {
         try {
-          await api("/ethw/api/bridge/submitted", { depositAddress: plan.depositAddress, txHash: hash });
+          await rememberBridge({
+            senderEmail: current.email,
+            recipient,
+            label,
+            depositAddress: plan.depositAddress,
+            txHash: hash
+          });
+          recorded = true;
         } catch {
+          recorded = false;
         }
       }
-      return hash;
+      return { hash, recorded };
     }
     var COLLECT_ATTEMPTS = 5;
     function setCollecting(active) {

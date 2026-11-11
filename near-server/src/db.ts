@@ -127,6 +127,22 @@ export function openDatabase(sqlitePath: string): Db {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS parcels_owner_account ON parcels(owner_account_id)");
   db.exec("CREATE INDEX IF NOT EXISTS escrow_recipient ON escrow_deposits(recipient_email)");
   db.exec("CREATE INDEX IF NOT EXISTS escrow_sender ON escrow_deposits(sender_email)");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bridge_sends (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_email TEXT NOT NULL,
+      sender_address TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      label TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      tx_hash TEXT NOT NULL UNIQUE,
+      deposit_address TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS bridge_sender ON bridge_sends(sender_email);
+  `);
   const escrowColumns = db.prepare("PRAGMA table_info(escrow_deposits)").all() as Array<{ name: string }>;
   const ensureEscrowColumn = (name: string, ddl: string) => {
     if (!escrowColumns.some((column) => column.name === name)) db.exec(ddl);
