@@ -12708,6 +12708,10 @@ var require_wallet = __commonJS({
     var recipientToken = 0;
     var gravatarCache = /* @__PURE__ */ new Map();
     var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    var MIN_BRIDGE_WHOLE = 10n;
+    function minimumBridgeAmount() {
+      return MIN_BRIDGE_WHOLE * 10n ** BigInt(config.decimals);
+    }
     function syncSetupButtons() {
       const ok = EMAIL_PATTERN.test(emailInput.value.trim());
       const known = ok && knownAccount;
@@ -12947,6 +12951,13 @@ var require_wallet = __commonJS({
         return;
       }
       show(pathIsSend() ? "send" : "wallet");
+    }
+    function leaveSendAfterSuccess() {
+      window.setTimeout(() => {
+        if (!current || !pathIsSend()) return;
+        window.history.pushState({}, "", "/");
+        renderRoute();
+      }, 2e3);
     }
     async function gravatarUrl(email, size) {
       const key = `${email}|${size}`;
@@ -13643,6 +13654,11 @@ var require_wallet = __commonJS({
           setSendEnabled(false, "Bridge");
           return;
         }
+        if (amount < minimumBridgeAmount()) {
+          resolvedEl.textContent = ethereumLine(query, ens, `The minimum bridge amount is ${MIN_BRIDGE_WHOLE} ${config.symbol}.`);
+          setSendEnabled(false, "Bridge");
+          return;
+        }
         if (!current) {
           resolvedEl.textContent = ethereumLine(query, ens, "Open your wallet before bridging.");
           setSendEnabled(false, "Bridge");
@@ -13716,6 +13732,7 @@ var require_wallet = __commonJS({
       sendButton.disabled = true;
       sendWrap.classList.add("busy");
       sendButton.setAttribute("aria-busy", "true");
+      let sent = false;
       try {
         await confirmSendPasskey();
         await ensureGas();
@@ -13787,15 +13804,20 @@ var require_wallet = __commonJS({
           });
           setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.accountId}. ${hash}`);
         } else if (detected.kind === "evm" || detected.kind === "ens") {
+          if (amount < minimumBridgeAmount()) {
+            throw new Error(`The minimum bridge amount is ${MIN_BRIDGE_WHOLE} ${config.symbol}.`);
+          }
           const recipient = await ethereumPayee();
           const destination = detected.kind === "ens" ? recipientInput.value.trim() : recipient;
-          const sent = await bridgeToEthereum(account, recipient, amount, destination);
+          const sent2 = await bridgeToEthereum(account, recipient, amount, destination);
           const sentLabel = formatAmount(amount.toString(), config.decimals);
-          const recorded = sent.recorded ? "" : " It will show in history once the transfer can be read.";
-          setStatus(`Bridging ${sentLabel} ${config.symbol} to ${destination}. Ethereum receives it after NEAR Intents finishes.${recorded} ${sent.hash}`);
+          const recorded = sent2.recorded ? "" : " It will show in history once the transfer can be read.";
+          setStatus(`Bridging ${sentLabel} ${config.symbol} to ${destination}. Ethereum receives it after NEAR Intents finishes.${recorded} ${sent2.hash}`);
         } else {
           throw new Error("Choose an email, a NEAR account, or an Ethereum address.");
         }
+        leaveSendAfterSuccess();
+        sent = true;
         await refreshBalances();
         await loadEscrow();
       } catch (error) {
@@ -13807,7 +13829,7 @@ var require_wallet = __commonJS({
       } finally {
         sendWrap.classList.remove("busy");
         sendButton.removeAttribute("aria-busy");
-        resolveRecipient().catch((error) => setStatus(explain(error)));
+        if (!sent) resolveRecipient().catch((error) => setStatus(explain(error)));
       }
     }
     async function signBridgeTransaction(account, tx) {

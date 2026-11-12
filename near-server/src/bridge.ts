@@ -160,6 +160,8 @@ export async function prepareEthereumBridge(config: Config, input: BridgeInput):
   }
   const amount = BigInt(input.amount);
   if (amount <= 0n) throw bridgeError(400, "Enter an amount greater than zero.");
+  const minimum = 10n * 10n ** BigInt(config.tokenDecimals);
+  if (amount < minimum) throw bridgeError(400, "The minimum bridge amount is 10 USDT.");
 
   let quote: IntentsQuote;
   try {

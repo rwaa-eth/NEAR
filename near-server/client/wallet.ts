@@ -143,6 +143,11 @@ let recipientToken = 0;
 const gravatarCache = new Map<string, string>();
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const MIN_BRIDGE_WHOLE = 10n;
+
+function minimumBridgeAmount(): bigint {
+  return MIN_BRIDGE_WHOLE * 10n ** BigInt(config.decimals);
+}
 
 function syncSetupButtons(): void {
   const ok = EMAIL_PATTERN.test(emailInput.value.trim());
@@ -413,6 +418,14 @@ function renderRoute(): void {
     return;
   }
   show(pathIsSend() ? "send" : "wallet");
+}
+
+function leaveSendAfterSuccess(): void {
+  window.setTimeout(() => {
+    if (!current || !pathIsSend()) return;
+    window.history.pushState({}, "", "/");
+    renderRoute();
+  }, 2000);
 }
 
 async function gravatarUrl(email: string, size: number): Promise<string> {
@@ -1202,6 +1215,11 @@ async function resolveRecipient(): Promise<void> {
       setSendEnabled(false, "Bridge");
       return;
     }
+    if (amount < minimumBridgeAmount()) {
+      resolvedEl.textContent = ethereumLine(query, ens, `The minimum bridge amount is ${MIN_BRIDGE_WHOLE} ${config.symbol}.`);
+      setSendEnabled(false, "Bridge");
+      return;
+    }
     if (!current) {
       resolvedEl.textContent = ethereumLine(query, ens, "Open your wallet before bridging.");
       setSendEnabled(false, "Bridge");
@@ -1282,6 +1300,7 @@ async function sendToken(): Promise<void> {
   sendButton.disabled = true;
   sendWrap.classList.add("busy");
   sendButton.setAttribute("aria-busy", "true");
+  let sent = false;
   try {
     await confirmSendPasskey();
     await ensureGas();
@@ -1353,6 +1372,9 @@ async function sendToken(): Promise<void> {
       });
       setStatus(`Sent ${formatAmount(amount.toString(), config.decimals)} ${config.symbol} to ${detected.accountId}. ${hash}`);
     } else if (detected.kind === "evm" || detected.kind === "ens") {
+      if (amount < minimumBridgeAmount()) {
+        throw new Error(`The minimum bridge amount is ${MIN_BRIDGE_WHOLE} ${config.symbol}.`);
+      }
       const recipient = await ethereumPayee();
       const destination = detected.kind === "ens" ? recipientInput.value.trim() : recipient;
       const sent = await bridgeToEthereum(account, recipient, amount, destination);
@@ -1362,6 +1384,8 @@ async function sendToken(): Promise<void> {
     } else {
       throw new Error("Choose an email, a NEAR account, or an Ethereum address.");
     }
+    leaveSendAfterSuccess();
+    sent = true;
     await refreshBalances();
     await loadEscrow();
   } catch (error) {
@@ -1373,7 +1397,7 @@ async function sendToken(): Promise<void> {
   } finally {
     sendWrap.classList.remove("busy");
     sendButton.removeAttribute("aria-busy");
-    resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
+    if (!sent) resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
   }
 }
 
