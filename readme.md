@@ -4,10 +4,8 @@ Two web wallets. An email address is the account a person remembers. Each wallet
 
 | Process | Chain | Host | Port |
 | --- | --- | --- | --- |
-| `near-server` | NEAR testnet | `test-near.raopenwallet.org` | 8099 |
-| `near-server` | NEAR mainnet | `raopenwallet.org` | 8099 |
-| `server` | Base Sepolia | `test-evm.raopenwallet.org` | 8098 |
-| `server` | Base | a second process, its own host | 8098 |
+| `near-server` | NEAR testnet | `test-near.raopenwallet.org` |
+| `near-server` | NEAR mainnet | `raopenwallet.org` |
 
 Mainnet and testnet are separate processes. They do not share a SQLite file or a passkey relying party. A passkey created on one host does not open the other.
 
