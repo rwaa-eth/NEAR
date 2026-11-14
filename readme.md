@@ -13,6 +13,10 @@ Mainnet and testnet are separate processes. They do not share a SQLite file or a
 
 `near-server` is a Fastify app. It serves the wallet pages and a small API. The browser signs NEAR transactions with a key it keeps locally. The server stores the email-to-account map, the payment index, and the operator key used to pay gas.
 
+## Mainnet transactions
+
+Here is a [list of transactions](transactions.md) covering the first usage of RaOpenwallet on mainnet.
+
 ### Account
 
 Signup asks for an email, sends a one-time code, and asks for an invite code. A person who already has USDT waiting in escrow can open the wallet without an invite.
