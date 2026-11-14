@@ -2,6 +2,7 @@
 name = "test-usdt"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "NEAR testnet stand-in for USDT. 6 decimals. The owner mints."
 publish = false
 
