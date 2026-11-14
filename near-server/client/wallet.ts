@@ -1,6 +1,7 @@
 import { keccak_256 } from "@noble/hashes/sha3";
 import { connect, keyStores, KeyPair, transactions } from "near-api-js";
 import QRCode from "qrcode";
+import { eip681Payment, payeeFromQr, type Eip681Payment } from "../src/payee";
 import { mountAddressScanner } from "./scan";
 
 type Config = {
@@ -113,9 +114,17 @@ const suggestList = document.querySelector<HTMLElement>("#recipient-suggest")!;
 const recipientAvatar = document.querySelector<HTMLImageElement>("#recipient-avatar")!;
 const kindChip = document.querySelector<HTMLElement>("#kind-chip")!;
 const resolvedEl = document.querySelector<HTMLElement>("#resolved")!;
+const quoteTimerEl = document.querySelector<HTMLElement>("#quote-timer")!;
 const amountInput = document.querySelector<HTMLInputElement>("#amount")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
 const sendWrap = document.querySelector<HTMLElement>("#send-wrap")!;
+const paymentPanel = document.querySelector<HTMLElement>("#payment-request")!;
+const paymentAmount = document.querySelector<HTMLElement>("#payment-amount")!;
+const paymentUuidRow = document.querySelector<HTMLElement>("#payment-uuid-row")!;
+const paymentUuid = document.querySelector<HTMLElement>("#payment-uuid")!;
+const paymentLabelRow = document.querySelector<HTMLElement>("#payment-label-row")!;
+const paymentLabel = document.querySelector<HTMLElement>("#payment-label")!;
+const bridgeFeeNote = document.querySelector<HTMLElement>("#bridge-fee-note")!;
 
 let config: Config = {
   network: "testnet",
@@ -140,6 +149,13 @@ let balanceTimer = 0;
 let bridgePoll = 0;
 let balanceInFlight = false;
 let recipientToken = 0;
+let paymentRequest: Eip681Payment | null = null;
+let writingAmount = false;
+let writingRecipient = false;
+let quoteTimer = 0;
+let quoteDeadline = 0;
+const QUOTE_REFRESH_MS = 2 * 60 * 1000;
+const NETWORK_WAIT = "Network error; wait a few seconds and try again.";
 const gravatarCache = new Map<string, string>();
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -196,7 +212,7 @@ function setStatus(message: string): void {
 function explain(error: unknown): string {
   const message = error instanceof Error ? error.message : "Something went wrong.";
   const match = message.match(/"ExecutionError":"((?:\\.|[^"\\])*)"/);
-  if (!match) return message;
+  if (!match) return isNetworkDrop(error) ? NETWORK_WAIT : message;
   try {
     return JSON.parse(`"${match[1]}"`);
   } catch {
@@ -204,15 +220,31 @@ function explain(error: unknown): string {
   }
 }
 
+/** Safari reports this when a request dies as the passkey sheet closes. */
+function isNetworkDrop(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return /load failed|failed to fetch|networkerror|network request failed|internet connection appears to be offline/i.test(message);
+}
+
 async function api<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const payload = (await response.json().catch(() => ({}))) as { error?: string };
-  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
-  return payload as T;
+  let last: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(path, {
+        method: body === undefined ? "GET" : "POST",
+        headers: body === undefined ? undefined : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+      return payload as T;
+    } catch (error) {
+      last = error;
+      if (!isNetworkDrop(error) || attempt === 2) break;
+      await pause(400 * (attempt + 1));
+    }
+  }
+  throw last instanceof Error ? last : new Error(NETWORK_WAIT);
 }
 
 function keys(): Record<string, string> {
@@ -412,12 +444,53 @@ function show(view: "setup" | "wallet" | "send"): void {
   accountBox.hidden = !current;
 }
 
+function stopQuoteCountdown(): void {
+  window.clearInterval(quoteTimer);
+  quoteTimer = 0;
+  quoteDeadline = 0;
+  quoteTimerEl.hidden = true;
+  quoteTimerEl.textContent = "";
+}
+
+function quoteCountdownLabel(remainingMs: number): string {
+  const total = Math.max(0, Math.ceil(remainingMs / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `Quote refreshes in ${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function startQuoteCountdown(): void {
+  stopQuoteCountdown();
+  quoteDeadline = Date.now() + QUOTE_REFRESH_MS;
+  quoteTimerEl.hidden = false;
+  const tick = (): void => {
+    const left = quoteDeadline - Date.now();
+    if (left > 0) {
+      quoteTimerEl.textContent = quoteCountdownLabel(left);
+      return;
+    }
+    stopQuoteCountdown();
+    if (sendWrap.classList.contains("busy") || !pathIsSend()) return;
+    quoteTimerEl.hidden = false;
+    quoteTimerEl.textContent = "Refreshing the quote.";
+    resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
+  };
+  tick();
+  quoteTimer = window.setInterval(tick, 1000);
+}
+
 function renderRoute(): void {
   if (!current) {
     show("setup");
+    stopQuoteCountdown();
     return;
   }
-  show(pathIsSend() ? "send" : "wallet");
+  const sending = pathIsSend();
+  show(sending ? "send" : "wallet");
+  if (!sending) stopQuoteCountdown();
+  if (sending && paymentRequest) {
+    resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
+  }
 }
 
 function leaveSendAfterSuccess(): void {
@@ -1127,6 +1200,7 @@ type BridgePlan = {
   transactions: BridgeTransaction[];
   timeEstimate: number;
   depositAddress?: string;
+  sendAmount?: string;
 };
 
 type SignedOutcome = {
@@ -1159,8 +1233,59 @@ function setSendEnabled(enabled: boolean, label = "Send"): void {
   sendButton.textContent = label;
 }
 
+function showBridgeFee(fee: bigint | null): void {
+  if (fee === null || fee <= 0n) {
+    bridgeFeeNote.hidden = true;
+    bridgeFeeNote.textContent = "";
+    return;
+  }
+  bridgeFeeNote.hidden = false;
+  bridgeFeeNote.textContent = `(Includes +${formatAmount(fee.toString(), config.decimals)} ${config.symbol} Bridge fee)`;
+}
+
+function renderPaymentRequest(): void {
+  const request = paymentRequest;
+  paymentPanel.hidden = !request;
+  if (!request) {
+    showBridgeFee(null);
+    return;
+  }
+  paymentAmount.textContent = `${request.amount} ${config.symbol}`;
+  paymentUuid.textContent = request.uuid;
+  paymentUuidRow.hidden = !request.uuid;
+  paymentLabel.textContent = request.label;
+  paymentLabelRow.hidden = !request.label;
+}
+
+function invoiceFor(address: string): Eip681Payment | null {
+  if (!paymentRequest?.usdt) return null;
+  return paymentRequest.address.toLowerCase() === address.trim().toLowerCase() ? paymentRequest : null;
+}
+
+function applyEip681(payment: Eip681Payment): void {
+  if (!payment.usdt) {
+    setStatus("That payment request is not for USDT.");
+    return;
+  }
+  paymentRequest = payment;
+  writingRecipient = true;
+  recipientInput.value = payment.address;
+  writingRecipient = false;
+  writingAmount = true;
+  amountInput.value = payment.amount;
+  writingAmount = false;
+  renderPaymentRequest();
+  hideSuggestions();
+  window.clearTimeout(lookupTimer);
+  lookupTimer = window.setTimeout(() => {
+    resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
+  }, 300);
+  setStatus("Payment request scanned.");
+}
+
 async function resolveRecipient(): Promise<void> {
   const token = ++recipientToken;
+  stopQuoteCountdown();
   const detected = detectRecipient(recipientInput.value);
   kindChip.dataset.kind = detected.kind;
   kindChip.textContent = detected.label;
@@ -1207,9 +1332,10 @@ async function resolveRecipient(): Promise<void> {
       return;
     }
     resolvedEns = { query, address };
+    const invoice = invoiceFor(address);
     let amount: bigint;
     try {
-      amount = parseAmount(amountInput.value, config.decimals);
+      amount = parseAmount(invoice ? invoice.amount : amountInput.value, config.decimals);
     } catch {
       resolvedEl.textContent = ethereumLine(query, ens, "Enter an amount to bridge USDT.");
       setSendEnabled(false, "Bridge");
@@ -1220,7 +1346,8 @@ async function resolveRecipient(): Promise<void> {
       setSendEnabled(false, "Bridge");
       return;
     }
-    if (!current) {
+    if (!current && !invoice) {
+      showBridgeFee(null);
       resolvedEl.textContent = ethereumLine(query, ens, "Open your wallet before bridging.");
       setSendEnabled(false, "Bridge");
       return;
@@ -1228,13 +1355,31 @@ async function resolveRecipient(): Promise<void> {
     resolvedEl.textContent = ethereumLine(query, ens, "Checking the bridge fee.");
     try {
       const plan = await api<BridgePlan>("/ethw/api/bridge", {
-        accountId: current.accountId,
+        ...(current ? { accountId: current.accountId } : {}),
         recipient: address,
         amount: amount.toString(),
+        exactOut: Boolean(invoice),
+        quoteOnly: !current,
       });
       if (token !== recipientToken) return;
+      if (invoice && plan.sendAmount) {
+        const gross = BigInt(plan.sendAmount);
+        writingAmount = true;
+        amountInput.value = formatAmount(plan.sendAmount, config.decimals);
+        writingAmount = false;
+        showBridgeFee(gross - amount);
+      } else {
+        showBridgeFee(null);
+      }
+      if (!current) {
+        resolvedEl.textContent = ethereumLine(query, ens, "Open your wallet before bridging.");
+        setSendEnabled(false, "Bridge");
+        startQuoteCountdown();
+        return;
+      }
       resolvedEl.textContent = ethereumLine(query, ens, plan.affordable ? bridgeFeeText(plan) : bridgeShortfall(plan));
       setSendEnabled(plan.affordable, "Bridge");
+      startQuoteCountdown();
     } catch (error) {
       if (token !== recipientToken) return;
       resolvedEl.textContent = ethereumLine(query, ens, explain(error));
@@ -1296,13 +1441,19 @@ async function sendToken(): Promise<void> {
   if (detected.kind === "empty" || detected.kind === "phone" || detected.kind === "unknown") {
     throw new Error(detected.kind === "phone" ? "Phone payouts are not wired up yet." : "Choose an email, a NEAR account, or an Ethereum address.");
   }
-  const amount = parseAmount(amountInput.value, config.decimals);
+  const invoice =
+    paymentRequest && recipientInput.value.trim().toLowerCase() === paymentRequest.address.toLowerCase() && paymentRequest.usdt
+      ? paymentRequest
+      : null;
+  const amount = parseAmount(invoice ? invoice.amount : amountInput.value, config.decimals);
   sendButton.disabled = true;
   sendWrap.classList.add("busy");
   sendButton.setAttribute("aria-busy", "true");
   let sent = false;
+  let holdStatus = false;
   try {
     await confirmSendPasskey();
+    await pause(400);
     await ensureGas();
     const account = await nearAccount();
     if (detected.kind === "email") {
@@ -1377,8 +1528,18 @@ async function sendToken(): Promise<void> {
       }
       const recipient = await ethereumPayee();
       const destination = detected.kind === "ens" ? recipientInput.value.trim() : recipient;
-      const sent = await bridgeToEthereum(account, recipient, amount, destination);
-      const sentLabel = formatAmount(amount.toString(), config.decimals);
+      const sent = await bridgeToEthereum(account, recipient, amount, destination, Boolean(invoice));
+      const sentLabel = formatAmount(sent.sendAmount, config.decimals);
+      if (invoice) {
+        paymentRequest = null;
+        renderPaymentRequest();
+        writingRecipient = true;
+        recipientInput.value = "";
+        writingRecipient = false;
+        writingAmount = true;
+        amountInput.value = "";
+        writingAmount = false;
+      }
       const recorded = sent.recorded ? "" : " It will show in history once the transfer can be read.";
       setStatus(`Bridging ${sentLabel} ${config.symbol} to ${destination}. Ethereum receives it after NEAR Intents finishes.${recorded} ${sent.hash}`);
     } else {
@@ -1393,11 +1554,18 @@ async function sendToken(): Promise<void> {
       setStatus("Passkey sign-in was cancelled.");
       return;
     }
+    if (isNetworkDrop(error)) {
+      holdStatus = true;
+      setStatus(NETWORK_WAIT);
+      const ethereum = detected.kind === "evm" || detected.kind === "ens";
+      setSendEnabled(true, ethereum ? "Bridge" : "Send");
+      return;
+    }
     throw error;
   } finally {
     sendWrap.classList.remove("busy");
     sendButton.removeAttribute("aria-busy");
-    if (!sent) resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
+    if (!sent && !holdStatus) resolveRecipient().catch((error: unknown) => setStatus(explain(error)));
   }
 }
 
@@ -1439,7 +1607,8 @@ async function bridgeToEthereum(
   recipient: string,
   amount: bigint,
   label: string,
-): Promise<{ hash: string; recorded: boolean }> {
+  exactOut = false,
+): Promise<{ hash: string; recorded: boolean; sendAmount: string }> {
   if (!current) throw new Error("Open your wallet first.");
   setStatus("Preparing the bridge.");
   const plan = await api<BridgePlan>("/ethw/api/bridge", {
@@ -1447,15 +1616,34 @@ async function bridgeToEthereum(
     recipient,
     amount: amount.toString(),
     commit: true,
+    exactOut,
   });
+  const sendAmount = plan.sendAmount ?? amount.toString();
+  if (exactOut && paymentRequest) {
+    writingAmount = true;
+    amountInput.value = formatAmount(sendAmount, config.decimals);
+    writingAmount = false;
+    showBridgeFee(BigInt(sendAmount) - amount);
+  }
   if (!plan.affordable || plan.transactions.length === 0) {
     throw new Error(bridgeShortfall(plan));
   }
   let hash = "";
   for (let index = 0; index < plan.transactions.length; index += 1) {
     const tx = plan.transactions[index]!;
-    setStatus(tx.actions.some((action) => action.methodName === "ft_transfer") ? "Sending USDT to Ethereum." : "Preparing the bridge account.");
-    const outcome = await signBridgeTransaction(account, tx);
+    const sending = tx.actions.some((action) => action.methodName === "ft_transfer");
+    setStatus(sending ? "Sending USDT to Ethereum." : "Preparing the bridge account.");
+    let outcome: SignedOutcome;
+    try {
+      outcome = await signBridgeTransaction(account, tx);
+    } catch (error) {
+      if (!isNetworkDrop(error)) throw error;
+      if (sending) {
+        throw new Error("The connection dropped while sending. Check the USDT balance before pressing Bridge again.");
+      }
+      await pause(600);
+      outcome = await signBridgeTransaction(account, tx);
+    }
     hash = outcome.transaction.hash;
   }
   let recorded = false;
@@ -1473,7 +1661,7 @@ async function bridgeToEthereum(
       recorded = false;
     }
   }
-  return { hash, recorded };
+  return { hash, recorded, sendAmount };
 }
 
 const COLLECT_ATTEMPTS = 5;
@@ -1597,6 +1785,16 @@ document.addEventListener("click", () => {
   accountMenu.hidden = true;
 });
 recipientInput.addEventListener("input", () => {
+  if (writingRecipient) return;
+  const payment = eip681Payment(recipientInput.value);
+  if (payment) {
+    applyEip681(payment);
+    return;
+  }
+  if (paymentRequest && recipientInput.value.trim().toLowerCase() !== paymentRequest.address.toLowerCase()) {
+    paymentRequest = null;
+    renderPaymentRequest();
+  }
   paintSuggestions();
   window.clearTimeout(lookupTimer);
   lookupTimer = window.setTimeout(() => {
@@ -1604,6 +1802,11 @@ recipientInput.addEventListener("input", () => {
   }, 300);
 });
 amountInput.addEventListener("input", () => {
+  if (writingAmount) return;
+  if (paymentRequest) {
+    paymentRequest = null;
+    renderPaymentRequest();
+  }
   const kind = detectRecipient(recipientInput.value).kind;
   if (kind !== "evm" && kind !== "ens") return;
   window.clearTimeout(lookupTimer);
@@ -1631,8 +1834,21 @@ recipientInput.addEventListener("blur", () => hideSuggestions());
 sendButton.addEventListener("click", () => {
   sendToken().catch((error: unknown) => setStatus(explain(error)));
 });
-mountAddressScanner((payee) => {
+mountAddressScanner((payload) => {
+  const payment = eip681Payment(payload);
+  if (payment) {
+    applyEip681(payment);
+    return;
+  }
+  const payee = payeeFromQr(payload);
+  if (!payee) return;
+  if (paymentRequest) {
+    paymentRequest = null;
+    renderPaymentRequest();
+  }
+  writingRecipient = true;
   recipientInput.value = payee;
+  writingRecipient = false;
   recipientInput.dispatchEvent(new Event("input"));
   setStatus(isEvmAddress(payee) ? "Ethereum address scanned." : "Address scanned.");
 });

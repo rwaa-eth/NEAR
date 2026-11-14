@@ -1,5 +1,5 @@
 import jsQR from "jsqr";
-import { payeeFromQr } from "../src/payee";
+import { eip681Payment, payeeFromQr } from "../src/payee";
 
 type BarcodeDetectorLike = {
   detect: (source: CanvasImageSource) => Promise<Array<{ rawValue?: string }>>;
@@ -104,7 +104,7 @@ export function mountAddressScanner(apply: (payee: string) => void): void {
     if (current !== generation || !video) return;
     try {
       const text = await textFromSource(video, canvas);
-      const payee = text ? payeeFromQr(text) : "";
+      const payee = text && (eip681Payment(text) || payeeFromQr(text)) ? text : "";
       if (payee && current === generation) {
         stop();
         apply(payee);
@@ -170,7 +170,7 @@ export function mountAddressScanner(apply: (payee: string) => void): void {
     if (!file) return;
     void textFromFile(file, canvas)
       .then((text) => {
-        const payee = payeeFromQr(text);
+        const payee = eip681Payment(text) || payeeFromQr(text) ? text : "";
         if (!payee) {
           note!.textContent = "That image has no wallet address.";
           return;

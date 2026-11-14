@@ -162,6 +162,23 @@
       padding: 1.15rem 1.15rem 1.25rem;
     }
 
+    .payment-request { margin-top: 0.85rem; }
+    .payment-request[hidden] { display: none !important; }
+    .payment-request dl { margin: 0; display: grid; gap: 0.55rem; }
+    .payment-request dl div { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+    .payment-request dl div[hidden] { display: none !important; }
+    .payment-request dt {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .payment-request dd { margin: 0; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
+    .bridge-fee-note { margin: 0.35rem 0 0; text-align: right; font-size: 0.85rem; }
+    .bridge-fee-note[hidden] { display: none !important; }
+
     .hero-copy {
       margin: 0 0 1rem;
       color: var(--muted);
@@ -691,6 +708,8 @@
     .kind-chip[data-kind="ens"] { background: rgba(224, 138, 43, 0.14); color: var(--amber-deep); }
     .kind-chip[data-kind="near"] { background: rgba(0, 0, 0, 0.08); color: #111; }
     #resolved { margin: 0.55rem 0 0; min-height: 1.3em; font-size: 0.9rem; }
+    .quote-timer { margin: 0.35rem 0 0; font-size: 0.85rem; }
+    .quote-timer[hidden] { display: none !important; }
     .toast {
       margin: 1rem 0 0;
       white-space: pre-wrap;
@@ -840,7 +859,7 @@
         <h2>Send</h2>
       </div>
       <div class="panel">
-        <p class="hero-copy">Pay anyone with an email, a NEAR account, an Ethereum address, or a .eth name. Scan a QR code to fill the address.</p>
+        <p class="hero-copy">Pay anyone with an email, a NEAR account, an Ethereum address, or a .eth name. Scan a payment QR to fill the address and amount.</p>
         <p id="gas" class="muted"></p>
         <label>To
           <span class="recipient-wrap">
@@ -854,14 +873,32 @@
         </label>
         <div id="kind-chip" class="kind-chip" data-kind="empty">Recipient</div>
         <p id="resolved" class="muted"></p>
+        <p id="quote-timer" class="muted quote-timer" hidden></p>
         <label>Amount
           <input id="amount" inputmode="decimal" placeholder="0.00">
         </label>
+        <p id="bridge-fee-note" class="bridge-fee-note muted" hidden></p>
         <div class="actions">
           <span id="send-wrap" class="await-ring">
             <button id="send" class="btn btn-primary" type="button">Send</button>
           </span>
         </div>
+      </div>
+      <div id="payment-request" class="panel payment-request" hidden>
+        <dl>
+          <div>
+            <dt>Amount</dt>
+            <dd id="payment-amount"></dd>
+          </div>
+          <div id="payment-uuid-row">
+            <dt>UUID</dt>
+            <dd id="payment-uuid"></dd>
+          </div>
+          <div id="payment-label-row">
+            <dt>Label</dt>
+            <dd id="payment-label"></dd>
+          </div>
+        </dl>
       </div>
     </section>
 

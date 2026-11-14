@@ -66,10 +66,12 @@ const transferBody = z
   });
 
 const bridgeBody = z.object({
-  accountId: nearAccountId,
+  accountId: nearAccountId.optional(),
   recipient: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/),
   amount: z.string().trim().regex(/^\d{1,40}$/),
   commit: z.boolean().optional(),
+  exactOut: z.boolean().optional(),
+  quoteOnly: z.boolean().optional(),
 });
 const releaseBody = z.object({ email });
 const reclaimBody = z.object({
@@ -198,8 +200,16 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
 
   app.post("/ethw/api/bridge", async (request) => {
     const body = bridgeBody.parse(request.body);
+    if (!body.quoteOnly && !body.accountId) throw statusError(400, "Open your wallet before bridging.");
     try {
-      return await prepareEthereumBridge(config, body);
+      return await prepareEthereumBridge(config, {
+        accountId: body.accountId ?? "0".repeat(64),
+        recipient: body.recipient,
+        amount: body.amount,
+        commit: body.quoteOnly ? false : body.commit,
+        exactOut: body.exactOut,
+        quoteOnly: body.quoteOnly,
+      });
     } catch (error) {
       const known = error as Error & { statusCode?: number };
       throw statusError(known.statusCode ?? 502, known.message || "could not prepare the bridge");

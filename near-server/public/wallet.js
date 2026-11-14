@@ -2394,6 +2394,54 @@ var require_browser = __commonJS({
   }
 });
 
+// src/payee.ts
+function eip681Payment(raw) {
+  const text = raw.trim();
+  const match = text.match(/^ethereum:([^?\s]+)(?:\?([^\s]*))?$/i);
+  if (!match) return null;
+  const path = decodeURIComponent(match[1].split("@")[0]);
+  const address = path.match(/0x[a-fA-F0-9]{40}/);
+  if (!address) return null;
+  const params = new URLSearchParams(match[2] ?? "");
+  const amount = (params.get("amount") ?? "").trim();
+  if (!/^\d+(\.\d+)?$/.test(amount)) return null;
+  const [whole, frac = ""] = amount.split(".");
+  if (BigInt(whole + (frac || "0")) <= 0n) return null;
+  const asset = (params.get("req-asset") ?? params.get("asset") ?? "").trim();
+  return {
+    address: address[0],
+    amount,
+    label: (params.get("label") ?? "").trim(),
+    uuid: (params.get("uuid") ?? "").trim(),
+    usdt: !asset || asset.toLowerCase() === USDT_ASSET
+  };
+}
+function payeeFromQr(raw) {
+  const text = raw.trim();
+  if (!text) return "";
+  const uri = text.match(/^(?:ethereum|near):([^\s?]+)/i);
+  let body = uri ? decodeURIComponent(uri[1].split("@")[0]) : text;
+  if (/^mailto:/i.test(body)) {
+    return decodeURIComponent(body.slice("mailto:".length).split("?")[0]).trim().toLowerCase();
+  }
+  const evm = body.match(/0x[a-fA-F0-9]{40}/);
+  if (evm) return evm[0];
+  const named = body.match(/[a-z0-9][a-z0-9._-]{0,62}\.(?:near|testnet)\b/i);
+  if (named) return named[0].toLowerCase();
+  const implicit = body.match(/(?:^|[^0-9a-f])([0-9a-f]{64})(?:$|[^0-9a-f])/i);
+  if (implicit) return implicit[1].toLowerCase();
+  const email = body.match(/[^\s<>]+@[^\s<>]+\.[^\s<>]+/);
+  if (email) return email[0].toLowerCase();
+  return body.trim();
+}
+var USDT_ASSET;
+var init_payee = __esm({
+  "src/payee.ts"() {
+    "use strict";
+    USDT_ASSET = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+  }
+});
+
 // node_modules/jsqr/dist/jsQR.js
 var require_jsQR = __commonJS({
   "node_modules/jsqr/dist/jsQR.js"(exports, module) {
@@ -12413,31 +12461,6 @@ var require_jsQR = __commonJS({
   }
 });
 
-// src/payee.ts
-function payeeFromQr(raw) {
-  const text = raw.trim();
-  if (!text) return "";
-  const uri = text.match(/^(?:ethereum|near):([^\s?]+)/i);
-  let body = uri ? decodeURIComponent(uri[1].split("@")[0]) : text;
-  if (/^mailto:/i.test(body)) {
-    return decodeURIComponent(body.slice("mailto:".length).split("?")[0]).trim().toLowerCase();
-  }
-  const evm = body.match(/0x[a-fA-F0-9]{40}/);
-  if (evm) return evm[0];
-  const named = body.match(/[a-z0-9][a-z0-9._-]{0,62}\.(?:near|testnet)\b/i);
-  if (named) return named[0].toLowerCase();
-  const implicit = body.match(/(?:^|[^0-9a-f])([0-9a-f]{64})(?:$|[^0-9a-f])/i);
-  if (implicit) return implicit[1].toLowerCase();
-  const email = body.match(/[^\s<>]+@[^\s<>]+\.[^\s<>]+/);
-  if (email) return email[0].toLowerCase();
-  return body.trim();
-}
-var init_payee = __esm({
-  "src/payee.ts"() {
-    "use strict";
-  }
-});
-
 // client/scan.ts
 function barcodeDetector() {
   if (detector !== void 0) return detector;
@@ -12524,7 +12547,7 @@ function mountAddressScanner(apply) {
     if (current !== generation || !video) return;
     try {
       const text = await textFromSource(video, canvas);
-      const payee = text ? payeeFromQr(text) : "";
+      const payee = text && (eip681Payment(text) || payeeFromQr(text)) ? text : "";
       if (payee && current === generation) {
         stop();
         apply(payee);
@@ -12586,7 +12609,7 @@ function mountAddressScanner(apply) {
     fileInput.value = "";
     if (!file) return;
     void textFromFile(file, canvas).then((text) => {
-      const payee = payeeFromQr(text);
+      const payee = eip681Payment(text) || payeeFromQr(text) ? text : "";
       if (!payee) {
         note.textContent = "That image has no wallet address.";
         return;
@@ -12614,6 +12637,7 @@ var require_wallet = __commonJS({
   "client/wallet.ts"() {
     init_sha3();
     var import_qrcode = __toESM(require_browser());
+    init_payee();
     init_scan();
     var KEYS = "nearw.keys";
     var PASSKEYS = "nearw.passkeys";
@@ -12680,9 +12704,17 @@ var require_wallet = __commonJS({
     var recipientAvatar = document.querySelector("#recipient-avatar");
     var kindChip = document.querySelector("#kind-chip");
     var resolvedEl = document.querySelector("#resolved");
+    var quoteTimerEl = document.querySelector("#quote-timer");
     var amountInput = document.querySelector("#amount");
     var sendButton = document.querySelector("#send");
     var sendWrap = document.querySelector("#send-wrap");
+    var paymentPanel = document.querySelector("#payment-request");
+    var paymentAmount = document.querySelector("#payment-amount");
+    var paymentUuidRow = document.querySelector("#payment-uuid-row");
+    var paymentUuid = document.querySelector("#payment-uuid");
+    var paymentLabelRow = document.querySelector("#payment-label-row");
+    var paymentLabel = document.querySelector("#payment-label");
+    var bridgeFeeNote = document.querySelector("#bridge-fee-note");
     var config = {
       network: "testnet",
       rpc: "/ethw/api/rpc",
@@ -12706,6 +12738,13 @@ var require_wallet = __commonJS({
     var bridgePoll = 0;
     var balanceInFlight = false;
     var recipientToken = 0;
+    var paymentRequest = null;
+    var writingAmount = false;
+    var writingRecipient = false;
+    var quoteTimer = 0;
+    var quoteDeadline = 0;
+    var QUOTE_REFRESH_MS = 2 * 60 * 1e3;
+    var NETWORK_WAIT = "Network error; wait a few seconds and try again.";
     var gravatarCache = /* @__PURE__ */ new Map();
     var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
     var MIN_BRIDGE_WHOLE = 10n;
@@ -12754,22 +12793,36 @@ var require_wallet = __commonJS({
     function explain(error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
       const match = message.match(/"ExecutionError":"((?:\\.|[^"\\])*)"/);
-      if (!match) return message;
+      if (!match) return isNetworkDrop(error) ? NETWORK_WAIT : message;
       try {
         return JSON.parse(`"${match[1]}"`);
       } catch {
         return message;
       }
     }
+    function isNetworkDrop(error) {
+      const message = error instanceof Error ? error.message : "";
+      return /load failed|failed to fetch|networkerror|network request failed|internet connection appears to be offline/i.test(message);
+    }
     async function api(path, body) {
-      const response = await fetch(path, {
-        method: body === void 0 ? "GET" : "POST",
-        headers: body === void 0 ? void 0 : { "content-type": "application/json" },
-        body: body === void 0 ? void 0 : JSON.stringify(body)
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
-      return payload;
+      let last;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const response = await fetch(path, {
+            method: body === void 0 ? "GET" : "POST",
+            headers: body === void 0 ? void 0 : { "content-type": "application/json" },
+            body: body === void 0 ? void 0 : JSON.stringify(body)
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+          return payload;
+        } catch (error) {
+          last = error;
+          if (!isNetworkDrop(error) || attempt === 2) break;
+          await pause(400 * (attempt + 1));
+        }
+      }
+      throw last instanceof Error ? last : new Error(NETWORK_WAIT);
     }
     function keys() {
       try {
@@ -12945,12 +12998,50 @@ var require_wallet = __commonJS({
       sendDock.hidden = view !== "wallet";
       accountBox.hidden = !current;
     }
+    function stopQuoteCountdown() {
+      window.clearInterval(quoteTimer);
+      quoteTimer = 0;
+      quoteDeadline = 0;
+      quoteTimerEl.hidden = true;
+      quoteTimerEl.textContent = "";
+    }
+    function quoteCountdownLabel(remainingMs) {
+      const total = Math.max(0, Math.ceil(remainingMs / 1e3));
+      const minutes = Math.floor(total / 60);
+      const seconds = total % 60;
+      return `Quote refreshes in ${minutes}:${seconds.toString().padStart(2, "0")}`;
+    }
+    function startQuoteCountdown() {
+      stopQuoteCountdown();
+      quoteDeadline = Date.now() + QUOTE_REFRESH_MS;
+      quoteTimerEl.hidden = false;
+      const tick = () => {
+        const left = quoteDeadline - Date.now();
+        if (left > 0) {
+          quoteTimerEl.textContent = quoteCountdownLabel(left);
+          return;
+        }
+        stopQuoteCountdown();
+        if (sendWrap.classList.contains("busy") || !pathIsSend()) return;
+        quoteTimerEl.hidden = false;
+        quoteTimerEl.textContent = "Refreshing the quote.";
+        resolveRecipient().catch((error) => setStatus(explain(error)));
+      };
+      tick();
+      quoteTimer = window.setInterval(tick, 1e3);
+    }
     function renderRoute() {
       if (!current) {
         show("setup");
+        stopQuoteCountdown();
         return;
       }
-      show(pathIsSend() ? "send" : "wallet");
+      const sending = pathIsSend();
+      show(sending ? "send" : "wallet");
+      if (!sending) stopQuoteCountdown();
+      if (sending && paymentRequest) {
+        resolveRecipient().catch((error) => setStatus(explain(error)));
+      }
     }
     function leaveSendAfterSuccess() {
       window.setTimeout(() => {
@@ -13598,8 +13689,55 @@ var require_wallet = __commonJS({
       sendButton.disabled = !enabled;
       sendButton.textContent = label;
     }
+    function showBridgeFee(fee) {
+      if (fee === null || fee <= 0n) {
+        bridgeFeeNote.hidden = true;
+        bridgeFeeNote.textContent = "";
+        return;
+      }
+      bridgeFeeNote.hidden = false;
+      bridgeFeeNote.textContent = `(Includes +${formatAmount(fee.toString(), config.decimals)} ${config.symbol} Bridge fee)`;
+    }
+    function renderPaymentRequest() {
+      const request = paymentRequest;
+      paymentPanel.hidden = !request;
+      if (!request) {
+        showBridgeFee(null);
+        return;
+      }
+      paymentAmount.textContent = `${request.amount} ${config.symbol}`;
+      paymentUuid.textContent = request.uuid;
+      paymentUuidRow.hidden = !request.uuid;
+      paymentLabel.textContent = request.label;
+      paymentLabelRow.hidden = !request.label;
+    }
+    function invoiceFor(address) {
+      if (!paymentRequest?.usdt) return null;
+      return paymentRequest.address.toLowerCase() === address.trim().toLowerCase() ? paymentRequest : null;
+    }
+    function applyEip681(payment) {
+      if (!payment.usdt) {
+        setStatus("That payment request is not for USDT.");
+        return;
+      }
+      paymentRequest = payment;
+      writingRecipient = true;
+      recipientInput.value = payment.address;
+      writingRecipient = false;
+      writingAmount = true;
+      amountInput.value = payment.amount;
+      writingAmount = false;
+      renderPaymentRequest();
+      hideSuggestions();
+      window.clearTimeout(lookupTimer);
+      lookupTimer = window.setTimeout(() => {
+        resolveRecipient().catch((error) => setStatus(explain(error)));
+      }, 300);
+      setStatus("Payment request scanned.");
+    }
     async function resolveRecipient() {
       const token = ++recipientToken;
+      stopQuoteCountdown();
       const detected = detectRecipient(recipientInput.value);
       kindChip.dataset.kind = detected.kind;
       kindChip.textContent = detected.label;
@@ -13646,9 +13784,10 @@ var require_wallet = __commonJS({
           return;
         }
         resolvedEns = { query, address };
+        const invoice = invoiceFor(address);
         let amount;
         try {
-          amount = parseAmount(amountInput.value, config.decimals);
+          amount = parseAmount(invoice ? invoice.amount : amountInput.value, config.decimals);
         } catch {
           resolvedEl.textContent = ethereumLine(query, ens, "Enter an amount to bridge USDT.");
           setSendEnabled(false, "Bridge");
@@ -13659,7 +13798,8 @@ var require_wallet = __commonJS({
           setSendEnabled(false, "Bridge");
           return;
         }
-        if (!current) {
+        if (!current && !invoice) {
+          showBridgeFee(null);
           resolvedEl.textContent = ethereumLine(query, ens, "Open your wallet before bridging.");
           setSendEnabled(false, "Bridge");
           return;
@@ -13667,13 +13807,31 @@ var require_wallet = __commonJS({
         resolvedEl.textContent = ethereumLine(query, ens, "Checking the bridge fee.");
         try {
           const plan = await api("/ethw/api/bridge", {
-            accountId: current.accountId,
+            ...current ? { accountId: current.accountId } : {},
             recipient: address,
-            amount: amount.toString()
+            amount: amount.toString(),
+            exactOut: Boolean(invoice),
+            quoteOnly: !current
           });
           if (token !== recipientToken) return;
+          if (invoice && plan.sendAmount) {
+            const gross = BigInt(plan.sendAmount);
+            writingAmount = true;
+            amountInput.value = formatAmount(plan.sendAmount, config.decimals);
+            writingAmount = false;
+            showBridgeFee(gross - amount);
+          } else {
+            showBridgeFee(null);
+          }
+          if (!current) {
+            resolvedEl.textContent = ethereumLine(query, ens, "Open your wallet before bridging.");
+            setSendEnabled(false, "Bridge");
+            startQuoteCountdown();
+            return;
+          }
           resolvedEl.textContent = ethereumLine(query, ens, plan.affordable ? bridgeFeeText(plan) : bridgeShortfall(plan));
           setSendEnabled(plan.affordable, "Bridge");
+          startQuoteCountdown();
         } catch (error) {
           if (token !== recipientToken) return;
           resolvedEl.textContent = ethereumLine(query, ens, explain(error));
@@ -13728,13 +13886,16 @@ var require_wallet = __commonJS({
       if (detected.kind === "empty" || detected.kind === "phone" || detected.kind === "unknown") {
         throw new Error(detected.kind === "phone" ? "Phone payouts are not wired up yet." : "Choose an email, a NEAR account, or an Ethereum address.");
       }
-      const amount = parseAmount(amountInput.value, config.decimals);
+      const invoice = paymentRequest && recipientInput.value.trim().toLowerCase() === paymentRequest.address.toLowerCase() && paymentRequest.usdt ? paymentRequest : null;
+      const amount = parseAmount(invoice ? invoice.amount : amountInput.value, config.decimals);
       sendButton.disabled = true;
       sendWrap.classList.add("busy");
       sendButton.setAttribute("aria-busy", "true");
       let sent = false;
+      let holdStatus = false;
       try {
         await confirmSendPasskey();
+        await pause(400);
         await ensureGas();
         const account = await nearAccount();
         if (detected.kind === "email") {
@@ -13809,8 +13970,18 @@ var require_wallet = __commonJS({
           }
           const recipient = await ethereumPayee();
           const destination = detected.kind === "ens" ? recipientInput.value.trim() : recipient;
-          const sent2 = await bridgeToEthereum(account, recipient, amount, destination);
-          const sentLabel = formatAmount(amount.toString(), config.decimals);
+          const sent2 = await bridgeToEthereum(account, recipient, amount, destination, Boolean(invoice));
+          const sentLabel = formatAmount(sent2.sendAmount, config.decimals);
+          if (invoice) {
+            paymentRequest = null;
+            renderPaymentRequest();
+            writingRecipient = true;
+            recipientInput.value = "";
+            writingRecipient = false;
+            writingAmount = true;
+            amountInput.value = "";
+            writingAmount = false;
+          }
           const recorded = sent2.recorded ? "" : " It will show in history once the transfer can be read.";
           setStatus(`Bridging ${sentLabel} ${config.symbol} to ${destination}. Ethereum receives it after NEAR Intents finishes.${recorded} ${sent2.hash}`);
         } else {
@@ -13825,11 +13996,18 @@ var require_wallet = __commonJS({
           setStatus("Passkey sign-in was cancelled.");
           return;
         }
+        if (isNetworkDrop(error)) {
+          holdStatus = true;
+          setStatus(NETWORK_WAIT);
+          const ethereum = detected.kind === "evm" || detected.kind === "ens";
+          setSendEnabled(true, ethereum ? "Bridge" : "Send");
+          return;
+        }
         throw error;
       } finally {
         sendWrap.classList.remove("busy");
         sendButton.removeAttribute("aria-busy");
-        if (!sent) resolveRecipient().catch((error) => setStatus(explain(error)));
+        if (!sent && !holdStatus) resolveRecipient().catch((error) => setStatus(explain(error)));
       }
     }
     async function signBridgeTransaction(account, tx) {
@@ -13854,23 +14032,42 @@ var require_wallet = __commonJS({
       }
       throw last instanceof Error ? last : new Error("could not save the bridge");
     }
-    async function bridgeToEthereum(account, recipient, amount, label) {
+    async function bridgeToEthereum(account, recipient, amount, label, exactOut = false) {
       if (!current) throw new Error("Open your wallet first.");
       setStatus("Preparing the bridge.");
       const plan = await api("/ethw/api/bridge", {
         accountId: current.accountId,
         recipient,
         amount: amount.toString(),
-        commit: true
+        commit: true,
+        exactOut
       });
+      const sendAmount = plan.sendAmount ?? amount.toString();
+      if (exactOut && paymentRequest) {
+        writingAmount = true;
+        amountInput.value = formatAmount(sendAmount, config.decimals);
+        writingAmount = false;
+        showBridgeFee(BigInt(sendAmount) - amount);
+      }
       if (!plan.affordable || plan.transactions.length === 0) {
         throw new Error(bridgeShortfall(plan));
       }
       let hash = "";
       for (let index = 0; index < plan.transactions.length; index += 1) {
         const tx = plan.transactions[index];
-        setStatus(tx.actions.some((action) => action.methodName === "ft_transfer") ? "Sending USDT to Ethereum." : "Preparing the bridge account.");
-        const outcome = await signBridgeTransaction(account, tx);
+        const sending = tx.actions.some((action) => action.methodName === "ft_transfer");
+        setStatus(sending ? "Sending USDT to Ethereum." : "Preparing the bridge account.");
+        let outcome;
+        try {
+          outcome = await signBridgeTransaction(account, tx);
+        } catch (error) {
+          if (!isNetworkDrop(error)) throw error;
+          if (sending) {
+            throw new Error("The connection dropped while sending. Check the USDT balance before pressing Bridge again.");
+          }
+          await pause(600);
+          outcome = await signBridgeTransaction(account, tx);
+        }
         hash = outcome.transaction.hash;
       }
       let recorded = false;
@@ -13888,7 +14085,7 @@ var require_wallet = __commonJS({
           recorded = false;
         }
       }
-      return { hash, recorded };
+      return { hash, recorded, sendAmount };
     }
     var COLLECT_ATTEMPTS = 5;
     function setCollecting(active) {
@@ -14007,6 +14204,16 @@ var require_wallet = __commonJS({
       accountMenu.hidden = true;
     });
     recipientInput.addEventListener("input", () => {
+      if (writingRecipient) return;
+      const payment = eip681Payment(recipientInput.value);
+      if (payment) {
+        applyEip681(payment);
+        return;
+      }
+      if (paymentRequest && recipientInput.value.trim().toLowerCase() !== paymentRequest.address.toLowerCase()) {
+        paymentRequest = null;
+        renderPaymentRequest();
+      }
       paintSuggestions();
       window.clearTimeout(lookupTimer);
       lookupTimer = window.setTimeout(() => {
@@ -14014,6 +14221,11 @@ var require_wallet = __commonJS({
       }, 300);
     });
     amountInput.addEventListener("input", () => {
+      if (writingAmount) return;
+      if (paymentRequest) {
+        paymentRequest = null;
+        renderPaymentRequest();
+      }
       const kind = detectRecipient(recipientInput.value).kind;
       if (kind !== "evm" && kind !== "ens") return;
       window.clearTimeout(lookupTimer);
@@ -14041,8 +14253,21 @@ var require_wallet = __commonJS({
     sendButton.addEventListener("click", () => {
       sendToken().catch((error) => setStatus(explain(error)));
     });
-    mountAddressScanner((payee) => {
+    mountAddressScanner((payload) => {
+      const payment = eip681Payment(payload);
+      if (payment) {
+        applyEip681(payment);
+        return;
+      }
+      const payee = payeeFromQr(payload);
+      if (!payee) return;
+      if (paymentRequest) {
+        paymentRequest = null;
+        renderPaymentRequest();
+      }
+      writingRecipient = true;
       recipientInput.value = payee;
+      writingRecipient = false;
       recipientInput.dispatchEvent(new Event("input"));
       setStatus(isEvmAddress(payee) ? "Ethereum address scanned." : "Address scanned.");
     });

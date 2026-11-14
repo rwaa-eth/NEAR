@@ -35,6 +35,8 @@ export type BridgePlan = {
   transactions: BridgeTransaction[];
   timeEstimate: number;
   depositAddress?: string;
+  /** Base units transferred on NEAR. Larger than `receiveAmount` by the bridge fee. */
+  sendAmount: string;
 };
 
 type BridgeInput = {
@@ -42,6 +44,10 @@ type BridgeInput = {
   recipient: string;
   amount: string;
   commit?: boolean;
+  /** `amount` is what the Ethereum address must receive. The transfer is raised by the fee. */
+  exactOut?: boolean;
+  /** Price the transfer without reading a wallet balance or creating a deposit. */
+  quoteOnly?: boolean;
 };
 
 type IntentsQuote = {
@@ -70,6 +76,17 @@ export function intentsFee(amountIn: bigint, amountOut: bigint): bigint {
   return amountIn - amountOut;
 }
 
+/**
+ * Next amount to quote so a later transfer still delivers `target` after this
+ * quote's shortfall. Returns null when this quote already covers the target.
+ */
+export function nextExactSend(target: bigint, sent: bigint, received: bigint): bigint | null {
+  if (received >= target) return null;
+  if (received <= 0n || received >= sent) return null;
+  const next = sent + (target - received);
+  return next > sent ? next : null;
+}
+
 function callTransaction(receiverId: string, methodName: string, args: object, gas: bigint, deposit: bigint): BridgeTransaction {
   return {
     receiverId,
@@ -96,7 +113,7 @@ async function hasStorage(rpcUrl: string, accountId: string): Promise<boolean> {
   return balance != null;
 }
 
-async function requestQuote(input: BridgeInput, commit: boolean): Promise<IntentsQuote> {
+async function requestQuote(input: BridgeInput, amount: bigint, commit: boolean): Promise<IntentsQuote> {
   const response = await fetch(`${INTENTS_API}/v0/quote`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -107,7 +124,7 @@ async function requestQuote(input: BridgeInput, commit: boolean): Promise<Intent
       originAsset: ORIGIN_ASSET,
       depositType: "ORIGIN_CHAIN",
       destinationAsset: DESTINATION_ASSET,
-      amount: input.amount,
+      amount: amount.toString(),
       recipient: input.recipient,
       recipientType: "DESTINATION_CHAIN",
       refundTo: input.accountId,
@@ -158,22 +175,57 @@ export async function prepareEthereumBridge(config: Config, input: BridgeInput):
   if (config.tokenAccount !== WALLET_USDT_ACCOUNT) {
     throw bridgeError(503, "Bridging expects usdt.tether-token.near.");
   }
-  const amount = BigInt(input.amount);
-  if (amount <= 0n) throw bridgeError(400, "Enter an amount greater than zero.");
+  const requested = BigInt(input.amount);
+  if (requested <= 0n) throw bridgeError(400, "Enter an amount greater than zero.");
   const minimum = 10n * 10n ** BigInt(config.tokenDecimals);
-  if (amount < minimum) throw bridgeError(400, "The minimum bridge amount is 10 USDT.");
+  if (requested < minimum) throw bridgeError(400, "The minimum bridge amount is 10 USDT.");
 
-  let quote: IntentsQuote;
-  try {
-    quote = await requestQuote(input, Boolean(input.commit));
-  } catch (error) {
-    if (error instanceof Error && "statusCode" in error) throw error;
-    throw bridgeError(502, error instanceof Error ? error.message : "could not price the bridge");
+  const quoteAmount = async (amount: bigint, commit: boolean): Promise<IntentsQuote> => {
+    try {
+      return await requestQuote(input, amount, commit);
+    } catch (error) {
+      if (error instanceof Error && "statusCode" in error) throw error;
+      throw bridgeError(502, error instanceof Error ? error.message : "could not price the bridge");
+    }
+  };
+  const priced = (quote: IntentsQuote): { amountIn: bigint; amountOut: bigint } => {
+    const amountIn = BigInt(quote.amountIn);
+    const amountOut = BigInt(quote.amountOut);
+    const tokenFee = intentsFee(amountIn, amountOut);
+    if (amountOut <= 0n || tokenFee >= amountIn) throw bridgeError(400, "That amount is too small to bridge.");
+    return { amountIn, amountOut };
+  };
+
+  let amount = requested;
+  let quote = await quoteAmount(amount, Boolean(input.commit) && !input.exactOut);
+  if (input.exactOut) {
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      const current = priced(quote);
+      const next = nextExactSend(requested, current.amountIn, current.amountOut);
+      if (next === null) break;
+      amount = next;
+      quote = await quoteAmount(amount, false);
+    }
+    const covered = priced(quote);
+    if (covered.amountOut > requested) {
+      const tighter = covered.amountIn - (covered.amountOut - requested);
+      if (tighter > requested) {
+        const trial = await quoteAmount(tighter, false);
+        if (priced(trial).amountOut >= requested) quote = trial;
+      }
+    }
+    if (input.commit) quote = await quoteAmount(priced(quote).amountIn, true);
+    if (priced(quote).amountOut < requested) {
+      const raised = nextExactSend(requested, priced(quote).amountIn, priced(quote).amountOut);
+      if (raised !== null) {
+        quote = await quoteAmount(raised, false);
+        if (input.commit) quote = await quoteAmount(priced(quote).amountIn, true);
+      }
+    }
   }
-  const amountIn = BigInt(quote.amountIn);
-  const amountOut = BigInt(quote.amountOut);
+  const { amountIn, amountOut } = priced(quote);
   const tokenFee = intentsFee(amountIn, amountOut);
-  if (amountOut <= 0n || tokenFee >= amountIn) throw bridgeError(400, "That amount is too small to bridge.");
+  if (input.exactOut && amountOut < requested) throw bridgeError(502, "Could not cover the bridge fee.");
 
   const transactions: BridgeTransaction[] = [];
   if (input.commit) {
@@ -204,10 +256,12 @@ export async function prepareEthereumBridge(config: Config, input: BridgeInput):
   }
 
   let spendable = 0n;
-  try {
-    spendable = BigInt((await accountFunds(config.nearRpcUrl, input.accountId)).spendable);
-  } catch (error) {
-    throw bridgeError(502, error instanceof Error ? error.message : "could not read the NEAR balance");
+  if (!input.quoteOnly) {
+    try {
+      spendable = BigInt((await accountFunds(config.nearRpcUrl, input.accountId)).spendable);
+    } catch (error) {
+      throw bridgeError(502, error instanceof Error ? error.message : "could not read the NEAR balance");
+    }
   }
   const previewStorage = input.commit ? 0n : TOKEN_STORAGE_DEPOSIT;
   const required = depositTotal(transactions) + previewStorage + GAS_RESERVE;
@@ -223,5 +277,6 @@ export async function prepareEthereumBridge(config: Config, input: BridgeInput):
     transactions: affordable && input.commit ? transactions : [],
     timeEstimate: quote.timeEstimate ?? 30,
     depositAddress: input.commit ? quote.depositAddress : undefined,
+    sendAmount: amountIn.toString(),
   };
 }
