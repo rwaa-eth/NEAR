@@ -241,3 +241,7 @@ New tables, beside the current credentials, challenges, parcels, homes, and pres
 4. **Audit.** Payment indexer, export, passkey signature over the pack, optional occupancy line.
 5. **Anchor.** Attestations also published as NEAR receipts from the attester account.
 
+## 13. Additional project involvement
+
+DaiKyuKim is also involved in the AMUMA submission.
+
