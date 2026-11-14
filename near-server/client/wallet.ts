@@ -118,6 +118,7 @@ const quoteTimerEl = document.querySelector<HTMLElement>("#quote-timer")!;
 const amountInput = document.querySelector<HTMLInputElement>("#amount")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
 const sendWrap = document.querySelector<HTMLElement>("#send-wrap")!;
+const fundsNote = document.querySelector<HTMLElement>("#funds-note")!;
 const paymentPanel = document.querySelector<HTMLElement>("#payment-request")!;
 const paymentAmount = document.querySelector<HTMLElement>("#payment-amount")!;
 const paymentUuidRow = document.querySelector<HTMLElement>("#payment-uuid-row")!;
@@ -148,6 +149,9 @@ let inviteAttempted = "";
 let balanceTimer = 0;
 let bridgePoll = 0;
 let balanceInFlight = false;
+let tokenBalanceRaw: bigint | null = null;
+let sendReady: boolean | null = null;
+let sendLabel = "Send";
 let recipientToken = 0;
 let paymentRequest: Eip681Payment | null = null;
 let writingAmount = false;
@@ -551,8 +555,10 @@ async function refreshBalances(initial = false): Promise<boolean> {
     const nextToken = balances.token === null ? "—" : formatAmount(balances.token, config.decimals, 2);
     const tokenChanged =
       !initial && !tokenBalance.querySelector(".amount-spin") && tokenBalance.textContent !== nextToken && nextToken !== "—";
+    tokenBalanceRaw = balances.token === null ? null : BigInt(balances.token);
     setBalance(nearBalance, formatAmount(balances.near, 24, 3));
     setBalance(tokenBalance, nextToken);
+    paintSendButton();
     return tokenChanged;
   } finally {
     balanceInFlight = false;
@@ -771,8 +777,10 @@ async function showWallet(email: string, accountId: string, secret: string): Pro
   try {
     await refreshBalances(true);
   } catch (error) {
+    tokenBalanceRaw = null;
     setBalance(nearBalance, "—");
     setBalance(tokenBalance, "—");
+    paintSendButton();
     setStatus(explain(error));
   }
   await loadEscrow();
@@ -986,8 +994,10 @@ async function openWallet(): Promise<void> {
 
 function logout(): void {
   current = null;
+  tokenBalanceRaw = null;
   stopBalanceRefresh();
   stopBridgePoll();
+  paintSendButton();
   window.localStorage.removeItem(EMAIL_KEY);
   accountMenu.hidden = true;
   show("setup");
@@ -1228,9 +1238,36 @@ function bridgeFeeText(plan: BridgePlan): string {
   return `Bridging fee is ${fee}. Recipient will receive ${receive} ${config.symbol}, expected time 5-15 minutes.`;
 }
 
+function spendAmount(): bigint | null {
+  try {
+    return parseAmount(amountInput.value, config.decimals);
+  } catch {
+    return null;
+  }
+}
+
+function fundsShort(): boolean {
+  const amount = spendAmount();
+  if (amount === null || tokenBalanceRaw === null) return false;
+  return amount > tokenBalanceRaw;
+}
+
+function paintSendButton(): void {
+  const short = fundsShort();
+  fundsNote.hidden = !short;
+  if (sendWrap.classList.contains("busy")) return;
+  if (sendReady === null) {
+    if (short) sendButton.disabled = true;
+    return;
+  }
+  sendButton.disabled = !sendReady || short;
+  sendButton.textContent = sendLabel;
+}
+
 function setSendEnabled(enabled: boolean, label = "Send"): void {
-  sendButton.disabled = !enabled;
-  sendButton.textContent = label;
+  sendReady = enabled;
+  sendLabel = label;
+  paintSendButton();
 }
 
 const fitMax = new WeakMap<HTMLElement, number>();
@@ -1322,6 +1359,7 @@ function applyEip681(payment: Eip681Payment): void {
   writingAmount = true;
   amountInput.value = payment.amount;
   writingAmount = false;
+  paintSendButton();
   renderPaymentRequest();
   hideSuggestions();
   window.clearTimeout(lookupTimer);
@@ -1851,6 +1889,7 @@ recipientInput.addEventListener("input", () => {
 });
 amountInput.addEventListener("input", () => {
   if (writingAmount) return;
+  paintSendButton();
   if (paymentRequest) {
     paymentRequest = null;
     renderPaymentRequest();

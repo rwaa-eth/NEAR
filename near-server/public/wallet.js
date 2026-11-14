@@ -12708,6 +12708,7 @@ var require_wallet = __commonJS({
     var amountInput = document.querySelector("#amount");
     var sendButton = document.querySelector("#send");
     var sendWrap = document.querySelector("#send-wrap");
+    var fundsNote = document.querySelector("#funds-note");
     var paymentPanel = document.querySelector("#payment-request");
     var paymentAmount = document.querySelector("#payment-amount");
     var paymentUuidRow = document.querySelector("#payment-uuid-row");
@@ -12737,6 +12738,9 @@ var require_wallet = __commonJS({
     var balanceTimer = 0;
     var bridgePoll = 0;
     var balanceInFlight = false;
+    var tokenBalanceRaw = null;
+    var sendReady = null;
+    var sendLabel = "Send";
     var recipientToken = 0;
     var paymentRequest = null;
     var writingAmount = false;
@@ -13095,8 +13099,10 @@ var require_wallet = __commonJS({
         );
         const nextToken = balances.token === null ? "\u2014" : formatAmount(balances.token, config.decimals, 2);
         const tokenChanged = !initial && !tokenBalance.querySelector(".amount-spin") && tokenBalance.textContent !== nextToken && nextToken !== "\u2014";
+        tokenBalanceRaw = balances.token === null ? null : BigInt(balances.token);
         setBalance(nearBalance, formatAmount(balances.near, 24, 3));
         setBalance(tokenBalance, nextToken);
+        paintSendButton();
         return tokenChanged;
       } finally {
         balanceInFlight = false;
@@ -13291,8 +13297,10 @@ var require_wallet = __commonJS({
       try {
         await refreshBalances(true);
       } catch (error) {
+        tokenBalanceRaw = null;
         setBalance(nearBalance, "\u2014");
         setBalance(tokenBalance, "\u2014");
+        paintSendButton();
         setStatus(explain(error));
       }
       await loadEscrow();
@@ -13494,8 +13502,10 @@ var require_wallet = __commonJS({
     }
     function logout() {
       current = null;
+      tokenBalanceRaw = null;
       stopBalanceRefresh();
       stopBridgePoll();
+      paintSendButton();
       window.localStorage.removeItem(EMAIL_KEY);
       accountMenu.hidden = true;
       show("setup");
@@ -13685,9 +13695,33 @@ var require_wallet = __commonJS({
       const receive = formatAmount(plan.receiveAmount, config.decimals, 4);
       return `Bridging fee is ${fee}. Recipient will receive ${receive} ${config.symbol}, expected time 5-15 minutes.`;
     }
+    function spendAmount() {
+      try {
+        return parseAmount(amountInput.value, config.decimals);
+      } catch {
+        return null;
+      }
+    }
+    function fundsShort() {
+      const amount = spendAmount();
+      if (amount === null || tokenBalanceRaw === null) return false;
+      return amount > tokenBalanceRaw;
+    }
+    function paintSendButton() {
+      const short = fundsShort();
+      fundsNote.hidden = !short;
+      if (sendWrap.classList.contains("busy")) return;
+      if (sendReady === null) {
+        if (short) sendButton.disabled = true;
+        return;
+      }
+      sendButton.disabled = !sendReady || short;
+      sendButton.textContent = sendLabel;
+    }
     function setSendEnabled(enabled, label = "Send") {
-      sendButton.disabled = !enabled;
-      sendButton.textContent = label;
+      sendReady = enabled;
+      sendLabel = label;
+      paintSendButton();
     }
     var fitMax = /* @__PURE__ */ new WeakMap();
     function textWidth(el) {
@@ -13769,6 +13803,7 @@ var require_wallet = __commonJS({
       writingAmount = true;
       amountInput.value = payment.amount;
       writingAmount = false;
+      paintSendButton();
       renderPaymentRequest();
       hideSuggestions();
       window.clearTimeout(lookupTimer);
@@ -14264,6 +14299,7 @@ var require_wallet = __commonJS({
     });
     amountInput.addEventListener("input", () => {
       if (writingAmount) return;
+      paintSendButton();
       if (paymentRequest) {
         paymentRequest = null;
         renderPaymentRequest();

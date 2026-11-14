@@ -445,6 +445,15 @@
     }
 
     .actions { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 1rem; }
+    .send-actions { align-items: center; flex-wrap: nowrap; }
+    .funds-note {
+      margin: 0;
+      color: var(--ink);
+      font-size: 0.95rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .funds-note[hidden] { display: none !important; }
     .await-ring {
       position: relative;
       display: inline-flex;
@@ -893,10 +902,11 @@
           <input id="amount" inputmode="decimal" placeholder="0.00">
         </label>
         <p id="bridge-fee-note" class="bridge-fee-note muted" hidden></p>
-        <div class="actions">
+        <div class="actions send-actions">
           <span id="send-wrap" class="await-ring">
             <button id="send" class="btn btn-primary" type="button">Send</button>
           </span>
+          <p id="funds-note" class="funds-note" hidden>Insufficient funds</p>
         </div>
       </div>
       <div id="payment-request" class="panel payment-request" hidden>
