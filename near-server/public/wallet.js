@@ -13689,6 +13689,46 @@ var require_wallet = __commonJS({
       sendButton.disabled = !enabled;
       sendButton.textContent = label;
     }
+    var fitMax = /* @__PURE__ */ new WeakMap();
+    function textWidth(el) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const width = range.getBoundingClientRect().width;
+      range.detach();
+      return width;
+    }
+    function fitToWidth(el) {
+      if (!el.isConnected || el.hidden || el.closest("[hidden]")) return;
+      if (!el.textContent?.trim()) {
+        el.style.fontSize = "";
+        return;
+      }
+      if (!fitMax.has(el)) fitMax.set(el, Number.parseFloat(getComputedStyle(el).fontSize) || 14);
+      const max = fitMax.get(el) ?? 14;
+      const min = 8;
+      const fits = () => textWidth(el) <= Math.max(0, el.clientWidth - 1);
+      el.style.fontSize = `${max}px`;
+      if (el.clientWidth <= 0 || fits()) return;
+      let low = min;
+      let high = max;
+      for (let step = 0; step < 16; step += 1) {
+        const mid = (low + high) / 2;
+        el.style.fontSize = `${mid}px`;
+        if (fits()) low = mid;
+        else high = mid;
+      }
+      el.style.fontSize = `${low}px`;
+    }
+    function fitSendLines() {
+      fitToWidth(bridgeFeeNote);
+      fitToWidth(paymentAmount);
+      fitToWidth(paymentUuid);
+      fitToWidth(paymentLabel);
+    }
+    function scheduleFitSendLines() {
+      requestAnimationFrame(() => fitSendLines());
+    }
+    new ResizeObserver(() => fitSendLines()).observe(sendView);
     function showBridgeFee(fee) {
       if (fee === null || fee <= 0n) {
         bridgeFeeNote.hidden = true;
@@ -13696,7 +13736,8 @@ var require_wallet = __commonJS({
         return;
       }
       bridgeFeeNote.hidden = false;
-      bridgeFeeNote.textContent = `(Includes +${formatAmount(fee.toString(), config.decimals)} ${config.symbol} Bridge fee)`;
+      bridgeFeeNote.textContent = `(Includes +${formatAmount(fee.toString(), config.decimals)} ${config.symbol} fee)`;
+      scheduleFitSendLines();
     }
     function renderPaymentRequest() {
       const request = paymentRequest;
@@ -13710,6 +13751,7 @@ var require_wallet = __commonJS({
       paymentUuidRow.hidden = !request.uuid;
       paymentLabel.textContent = request.label;
       paymentLabelRow.hidden = !request.label;
+      scheduleFitSendLines();
     }
     function invoiceFor(address) {
       if (!paymentRequest?.usdt) return null;

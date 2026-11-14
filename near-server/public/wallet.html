@@ -165,18 +165,33 @@
     .payment-request { margin-top: 0.85rem; }
     .payment-request[hidden] { display: none !important; }
     .payment-request dl { margin: 0; display: grid; gap: 0.55rem; }
-    .payment-request dl div { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+    .payment-request dl div { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; min-width: 0; }
     .payment-request dl div[hidden] { display: none !important; }
     .payment-request dt {
       margin: 0;
+      flex: none;
       color: var(--muted);
       font-size: 0.85rem;
       font-weight: 600;
       letter-spacing: 0.04em;
       text-transform: uppercase;
     }
-    .payment-request dd { margin: 0; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
-    .bridge-fee-note { margin: 0.35rem 0 0; text-align: right; font-size: 0.85rem; }
+    .payment-request dd {
+      margin: 0;
+      min-width: 0;
+      flex: 1;
+      font-weight: 700;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .bridge-fee-note {
+      margin: 0.35rem 0 0;
+      text-align: right;
+      font-size: 0.85rem;
+      white-space: nowrap;
+      overflow: hidden;
+    }
     .bridge-fee-note[hidden] { display: none !important; }
 
     .hero-copy {
