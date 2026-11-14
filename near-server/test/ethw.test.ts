@@ -63,7 +63,9 @@ describe("NEAR wallet", () => {
     assert.equal(config.json().symbol, "USDT");
     assert.equal(config.json().token, "token.testnet");
     assert.equal(config.json().network, "testnet");
+    assert.equal(config.json().inviteRequired, false);
     assert.equal(config.json().escrow, null);
+    assert.match(page.body, /id="network-badge" class="network-badge">TEST/);
     const sendPage = await app.inject({ method: "GET", url: "/send" });
     assert.equal(sendPage.statusCode, 200);
     assert.match(sendPage.body, /NEAR account/);
@@ -82,12 +84,6 @@ describe("NEAR wallet", () => {
     });
     assert.equal(missing.json().registered, false);
     const emailToken = await verifiedToken(app, "Ada@Example.com");
-    const denied = await app.inject({
-      method: "POST",
-      url: "/ethw/api/register",
-      payload: { email: "Ada@Example.com", publicKey, emailToken },
-    });
-    assert.equal(denied.statusCode, 403);
     const issued = await app.inject({
       method: "POST",
       url: "/v1/signup-keys",
@@ -104,22 +100,21 @@ describe("NEAR wallet", () => {
     const created = await app.inject({
       method: "POST",
       url: "/ethw/api/register",
-      payload: { email: "Ada@Example.com", publicKey, emailToken, signupKey: issued.json().code },
+      payload: { email: "Ada@Example.com", publicKey, emailToken },
     });
-    assert.equal(created.statusCode, 200);
+    assert.equal(created.statusCode, 200, created.body);
     assert.equal(created.json().accountId, implicitAccountId(publicKey));
     const otherToken = await verifiedToken(app, "bob@example.com");
-    const reused = await app.inject({
+    const second = await app.inject({
       method: "POST",
       url: "/ethw/api/register",
       payload: {
         email: "bob@example.com",
         publicKey: "ed25519:8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
         emailToken: otherToken,
-        signupKey: issued.json().code,
       },
     });
-    assert.equal(reused.statusCode, 403);
+    assert.equal(second.statusCode, 200, second.body);
     const found = await app.inject({
       method: "GET",
       url: "/ethw/api/account?email=ada@example.com",
@@ -139,11 +134,65 @@ describe("NEAR wallet", () => {
     await app.close();
   });
 
+  it("asks for an invite code on mainnet", async () => {
+    const config = loadConfig({
+      ...process.env,
+      STATIC_API_TOKEN: "test-token",
+      SQLITE_PATH: ":memory:",
+      NEAR_NETWORK: "mainnet",
+      NEAR_PROVISION_ACCOUNTS: "false",
+      NEAR_OPERATOR_KEY: "",
+      NEAR_RCV_KEY: "",
+      EMAIL_DEV_MODE: "true",
+      RESEND_API_KEY: "",
+      SMTP_URL: "",
+    });
+    const app = buildApp(config, openDatabase(":memory:"));
+    const page = await app.inject({ method: "GET", url: "/" });
+    assert.match(page.body, /id="network-badge" class="network-badge" hidden>TEST/);
+    const api = await app.inject({ method: "GET", url: "/ethw/api/config" });
+    assert.equal(api.json().inviteRequired, true);
+    assert.equal(api.json().network, "mainnet");
+    const emailToken = await verifiedToken(app, "Ada@Example.com");
+    const denied = await app.inject({
+      method: "POST",
+      url: "/ethw/api/register",
+      payload: { email: "Ada@Example.com", publicKey, emailToken },
+    });
+    assert.equal(denied.statusCode, 403);
+    const issued = await app.inject({
+      method: "POST",
+      url: "/v1/signup-keys",
+      headers: { authorization: "Bearer test-token" },
+    });
+    const created = await app.inject({
+      method: "POST",
+      url: "/ethw/api/register",
+      payload: { email: "Ada@Example.com", publicKey, emailToken, signupKey: issued.json().code },
+    });
+    assert.equal(created.statusCode, 200, created.body);
+    assert.equal(created.json().accountId, implicitAccountId(publicKey));
+    const otherToken = await verifiedToken(app, "bob@example.com");
+    const reused = await app.inject({
+      method: "POST",
+      url: "/ethw/api/register",
+      payload: {
+        email: "bob@example.com",
+        publicKey: "ed25519:8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+        emailToken: otherToken,
+        signupKey: issued.json().code,
+      },
+    });
+    assert.equal(reused.statusCode, 403);
+    await app.close();
+  });
+
   it("issues an invite code after the invite password", async () => {
     const config = loadConfig({
       ...process.env,
       STATIC_API_TOKEN: "test-token",
       SQLITE_PATH: ":memory:",
+      NEAR_NETWORK: "mainnet",
       NEAR_PROVISION_ACCOUNTS: "false",
       NEAR_OPERATOR_KEY: "",
       NEAR_RCV_KEY: "",

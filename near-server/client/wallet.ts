@@ -12,6 +12,7 @@ type Config = {
   decimals: number;
   escrow: string | null;
   mailReady: boolean;
+  inviteRequired: boolean;
 };
 
 type Account = {
@@ -108,6 +109,7 @@ const historyList = document.querySelector<HTMLElement>("#history")!;
 const outgoingSection = document.querySelector<HTMLElement>("#outgoing-section")!;
 const outgoingList = document.querySelector<HTMLElement>("#outgoing")!;
 const networkLabel = document.querySelector<HTMLElement>("#network-label")!;
+const networkBadge = document.querySelector<HTMLElement>("#network-badge")!;
 const cashButtons = [...document.querySelectorAll<HTMLButtonElement>(".cash-lozenge")];
 const cashModal = document.querySelector<HTMLElement>("#cash-modal")!;
 const cashImage = document.querySelector<HTMLImageElement>("#cash-step")!;
@@ -139,6 +141,7 @@ let config: Config = {
   decimals: 6,
   escrow: null,
   mailReady: false,
+  inviteRequired: true,
 };
 let current: { email: string; accountId: string; secret: string } | null = null;
 let verified: { email: string; emailToken: string } | null = null;
@@ -437,6 +440,7 @@ function explorerBase(): string {
 function applyNetwork(): void {
   const mainnet = config.network === "mainnet";
   networkLabel.textContent = mainnet ? "NEAR mainnet" : "NEAR testnet";
+  networkBadge.hidden = mainnet;
   recipientInput.placeholder = mainnet ? "email, +phone, or name.near" : "email, +phone, or name.testnet";
 }
 
@@ -879,7 +883,7 @@ async function verifyCode(): Promise<void> {
     verified = { email, emailToken: result.emailToken };
     retryButton.hidden = true;
     const escrow = await api<{ incoming: unknown[] }>(`/ethw/api/escrow?email=${encodeURIComponent(email)}`);
-    if (escrow.incoming.length > 0) {
+    if (escrow.incoming.length > 0 || !config.inviteRequired) {
       signupKeyField.hidden = true;
       useSignupKeyButton.hidden = true;
       setStatus("Email verified. Setting up your passkey.");

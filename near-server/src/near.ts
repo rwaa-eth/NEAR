@@ -57,6 +57,20 @@ export function accountIdForEmail(email: string, network = "testnet"): string {
   return `rw${emailHash(email).slice(0, 16)}.${suffix}`;
 }
 
+/** Test USDT minted to a new testnet account. The faucet supplies the NEAR. */
+export const TESTNET_WELCOME_USDT = 25n;
+
+/** Named testnet account, for example `rwaa33432323.testnet`. The same key and salt stay on one name. */
+export function namedTestnetAccountId(publicKey: string, salt = 0): string {
+  const hex = implicitAccountId(publicKey);
+  const n = (BigInt(`0x${hex.slice(0, 16)}`) + BigInt(salt) * 7919n) % 100_000_000n;
+  return `rwaa${n.toString().padStart(8, "0")}.testnet`;
+}
+
+export function welcomeTokenUnits(decimals: number): string {
+  return (TESTNET_WELCOME_USDT * 10n ** BigInt(decimals)).toString();
+}
+
 async function rpc<T>(rpcUrl: string, method: string, params: unknown): Promise<T> {
   const response = await fetch(rpcUrl, {
     method: "POST",
@@ -195,6 +209,23 @@ export async function provisionAccount(config: Config, accountId: string, public
     throw Object.assign(new Error(text || `faucet returned ${response.status}`), { statusCode: 502 });
   }
   await ensureTokenStorage(config, accountId);
+}
+
+/**
+ * Create a testnet account through the faucet, which sends the starting NEAR (10 NEAR),
+ * then mint welcome test USDT when the balance is still zero.
+ */
+export async function fundNewTestnetAccount(config: Config, accountId: string, publicKey: string): Promise<void> {
+  await provisionAccount(config, accountId, publicKey);
+  if (!config.tokenAccount || !config.operatorAccount || !config.operatorKey) {
+    throw Object.assign(new Error("testnet USDT mint is not configured"), { statusCode: 503 });
+  }
+  const balance = await callView(config.nearRpcUrl, config.tokenAccount, "ft_balance_of", {
+    account_id: accountId,
+  });
+  const current = typeof balance === "string" ? balance : "0";
+  if (current !== "0") return;
+  await mintToken(config, accountId, welcomeTokenUnits(config.tokenDecimals));
 }
 
 /** Pay the token's storage fee so `accountId` can receive USDT. No-op when it is already registered. */

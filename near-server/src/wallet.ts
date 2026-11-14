@@ -21,7 +21,16 @@ import {
   transfersFromOutcome,
 } from "./escrow";
 import { mailConfigured, sendMail } from "./mail";
-import { accountFunds, callView, ensureGas, ensureTokenStorage, fetchTx, implicitAccountId } from "./near";
+import {
+  accountFunds,
+  callView,
+  ensureGas,
+  ensureTokenStorage,
+  fetchTx,
+  fundNewTestnetAccount,
+  implicitAccountId,
+  namedTestnetAccountId,
+} from "./near";
 import { consumeEmailSession, issueOtp, verifyOtp } from "./otp";
 import { clientAddress, countryFromHeaders, isLatamCountry, visitorCountry } from "./region";
 import { consumeSignupKey, releaseSignupKey, signupKeyAvailable } from "./signupKey";
@@ -173,6 +182,7 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
     decimals: config.tokenDecimals,
     escrow: config.escrowAccount || null,
     mailReady: mailConfigured(config),
+    inviteRequired: config.nearNetwork !== "testnet",
   }));
 
   app.get("/ethw/api/ens", async (request) => {
@@ -320,6 +330,29 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
     }
   });
 
+  async function openTestnetAccount(publicKey: string): Promise<string> {
+    let last: Error = statusError(409, "could not find a free testnet account name");
+    for (let salt = 0; salt < 5; salt += 1) {
+      const accountId = namedTestnetAccountId(publicKey, salt);
+      const taken = db.prepare("SELECT email FROM near_accounts WHERE account_id = ?").get(accountId) as
+        | { email: string }
+        | undefined;
+      if (taken) continue;
+      try {
+        await fundNewTestnetAccount(config, accountId, publicKey);
+        return accountId;
+      } catch (error) {
+        const known = error as Error;
+        if (known.message.includes("different key") || /already exists/i.test(known.message)) {
+          last = known;
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw last;
+  }
+
   app.post("/ethw/api/register", async (request) => {
     const body = registerBody.parse(request.body);
     const existing = readAccount(db, body.email);
@@ -327,8 +360,9 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
       if (existing.publicKey !== body.publicKey) throw statusError(409, "that email is already registered");
       return { email: existing.email, accountId: existing.accountId };
     }
+    const testnet = config.nearNetwork === "testnet";
     const invited = listEscrow(db, body.email).incoming.length > 0;
-    if (!invited && (!body.signupKey || !signupKeyAvailable(db, body.signupKey))) {
+    if (!testnet && !invited && (!body.signupKey || !signupKeyAvailable(db, body.signupKey))) {
       throw statusError(403, "a signup key is required");
     }
     try {
@@ -337,12 +371,27 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
       const known = error as Error & { statusCode?: number };
       throw statusError(known.statusCode ?? 500, known.message);
     }
+    const createdAt = new Date().toISOString();
+    if (testnet && config.provisionAccounts) {
+      let accountId: string;
+      try {
+        accountId = await openTestnetAccount(body.publicKey);
+      } catch (error) {
+        const known = error as Error & { statusCode?: number };
+        throw statusError(known.statusCode ?? 502, known.message);
+      }
+      db.prepare(
+        `INSERT INTO near_accounts (email, account_id, public_key, created_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run(body.email, accountId, body.publicKey, createdAt);
+      return { email: body.email, accountId };
+    }
     const accountId = implicitAccountId(body.publicKey);
     const taken = db.prepare("SELECT email FROM near_accounts WHERE account_id = ?").get(accountId) as
       | { email: string }
       | undefined;
     if (taken) throw statusError(409, "that NEAR account already belongs to another email");
-    const spent = !invited && body.signupKey ? consumeSignupKey(db, body.signupKey) : undefined;
+    const spent = !testnet && !invited && body.signupKey ? consumeSignupKey(db, body.signupKey) : undefined;
     try {
       await ensureGas(config, accountId);
     } catch (error) {
@@ -350,7 +399,6 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
       const known = error as Error & { statusCode?: number };
       throw statusError(known.statusCode ?? 502, known.message);
     }
-    const createdAt = new Date().toISOString();
     db.prepare(
       `INSERT INTO near_accounts (email, account_id, public_key, created_at)
        VALUES (?, ?, ?, ?)`,

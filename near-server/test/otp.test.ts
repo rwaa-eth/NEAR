@@ -11,6 +11,7 @@ function testApp() {
     ...process.env,
     STATIC_API_TOKEN: "test-token",
     SQLITE_PATH: ":memory:",
+    NEAR_NETWORK: "mainnet",
     NEAR_PROVISION_ACCOUNTS: "false",
     NEAR_OPERATOR_KEY: "",
     NEAR_RCV_KEY: "",

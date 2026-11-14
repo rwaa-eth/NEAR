@@ -12698,6 +12698,7 @@ var require_wallet = __commonJS({
     var outgoingSection = document.querySelector("#outgoing-section");
     var outgoingList = document.querySelector("#outgoing");
     var networkLabel = document.querySelector("#network-label");
+    var networkBadge = document.querySelector("#network-badge");
     var cashButtons = [...document.querySelectorAll(".cash-lozenge")];
     var cashModal = document.querySelector("#cash-modal");
     var cashImage = document.querySelector("#cash-step");
@@ -12727,7 +12728,8 @@ var require_wallet = __commonJS({
       symbol: "USDT",
       decimals: 6,
       escrow: null,
-      mailReady: false
+      mailReady: false,
+      inviteRequired: true
     };
     var current = null;
     var verified = null;
@@ -12994,6 +12996,7 @@ var require_wallet = __commonJS({
     function applyNetwork() {
       const mainnet = config.network === "mainnet";
       networkLabel.textContent = mainnet ? "NEAR mainnet" : "NEAR testnet";
+      networkBadge.hidden = mainnet;
       recipientInput.placeholder = mainnet ? "email, +phone, or name.near" : "email, +phone, or name.testnet";
     }
     function pathIsSend() {
@@ -13392,7 +13395,7 @@ var require_wallet = __commonJS({
         verified = { email, emailToken: result.emailToken };
         retryButton.hidden = true;
         const escrow = await api(`/ethw/api/escrow?email=${encodeURIComponent(email)}`);
-        if (escrow.incoming.length > 0) {
+        if (escrow.incoming.length > 0 || !config.inviteRequired) {
           signupKeyField.hidden = true;
           useSignupKeyButton.hidden = true;
           setStatus("Email verified. Setting up your passkey.");

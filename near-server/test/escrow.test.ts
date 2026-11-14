@@ -4,7 +4,7 @@ import { buildApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { openDatabase } from "../src/db";
 import { depositsFromOutcome, emailHash, paymentsFromOutcome, recordDeposits, recordDirectPayments, transfersFromOutcome } from "../src/escrow";
-import { accountIdForEmail, implicitAccountId, type TxOutcome } from "../src/near";
+import { accountIdForEmail, implicitAccountId, namedTestnetAccountId, welcomeTokenUnits, type TxOutcome } from "../src/near";
 
 const escrow = "escrow.testnet";
 const sender = "rw1111111111111111.testnet";
@@ -111,6 +111,11 @@ describe("NEAR escrow records", () => {
     assert.equal(id, accountIdForEmail("ada@example.com"));
     assert.match(id, /^rw[0-9a-f]{16}\.testnet$/);
     assert.equal(accountIdForEmail("ada@example.com", "mainnet").endsWith(".near"), true);
+    const named = namedTestnetAccountId("ed25519:11111111111111111111111111111111");
+    assert.match(named, /^rwaa\d{8}\.testnet$/);
+    assert.equal(named, namedTestnetAccountId("ed25519:11111111111111111111111111111111"));
+    assert.notEqual(named, namedTestnetAccountId("ed25519:11111111111111111111111111111111", 1));
+    assert.equal(welcomeTokenUnits(6), "25000000");
   });
 
   it("reads a direct ft_transfer and files it in the recipient history", () => {

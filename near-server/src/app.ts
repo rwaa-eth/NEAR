@@ -116,7 +116,11 @@ export function buildApp(config: Config = loadConfig(), db: Db = openDatabase(co
 
   const walletPage = () => {
     const html = fs.readFileSync(path.join(__dirname, "..", "public", "wallet.html"), "utf8");
-    return html;
+    if (config.nearNetwork !== "testnet") return html;
+    return html.replace(
+      'id="network-badge" class="network-badge" hidden',
+      'id="network-badge" class="network-badge"',
+    );
   };
 
   app.get("/", async (_request, reply) => reply.type("text/html").send(walletPage()));
