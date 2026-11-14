@@ -83,3 +83,8 @@ The NEAR server still mounts the older lot API (`/v1/parcels`, nearby lots, pres
 ## License
 
 RaOpenwallet is released under the MIT license. See `LICENSE`.
+
+## Additional project involvement
+
+DaiKyuKim is also involved in the AMUMA submission.
+
