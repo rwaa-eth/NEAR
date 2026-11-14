@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { prepareEthereumBridge, submitIntentsDeposit } from "./bridge";
 import { listBridgeHistory, mergeHistory, recordBridgeSend, refreshBridgeSends } from "./bridgeHistory";
@@ -23,6 +23,7 @@ import {
 import { mailConfigured, sendMail } from "./mail";
 import { accountFunds, callView, ensureGas, ensureTokenStorage, fetchTx, implicitAccountId } from "./near";
 import { consumeEmailSession, issueOtp, verifyOtp } from "./otp";
+import { clientAddress, countryFromHeaders, isLatamCountry, visitorCountry } from "./region";
 import { consumeSignupKey, releaseSignupKey, signupKeyAvailable } from "./signupKey";
 
 const email = z.string().trim().email().transform((value) => value.toLowerCase());
@@ -94,6 +95,15 @@ type AccountRow = {
   created_at: string;
 };
 
+const CASH_STEP = /^(?:[1-9]|10|cash)\.png$/;
+
+function sendCashStep(reply: FastifyReply, folder: "en" | "sp", file: string) {
+  const name = file.startsWith(`${folder}-`) ? file.slice(folder.length + 1) : "";
+  if (!CASH_STEP.test(name)) throw statusError(404, "not found");
+  const image = fs.readFileSync(path.join(__dirname, "..", "public", folder, `${folder}-${name}`));
+  return reply.type("image/png").send(image);
+}
+
 function statusError(statusCode: number, message: string): Error {
   const error = new Error(message) as Error & { statusCode: number };
   error.statusCode = statusCode;
@@ -140,6 +150,19 @@ export function registerNearWallet(app: FastifyInstance, config: Config, db: Db)
   app.get("/copyicon.png", async (_request, reply) => {
     const image = fs.readFileSync(path.join(__dirname, "..", "public", "copyicon.png"));
     return reply.type("image/png").send(image);
+  });
+
+  app.get("/paka.svg", async (_request, reply) => {
+    const image = fs.readFileSync(path.join(__dirname, "..", "public", "paka.svg"));
+    return reply.type("image/svg+xml").send(image);
+  });
+
+  app.get<{ Params: { file: string } }>("/en/:file", async (request, reply) => sendCashStep(reply, "en", request.params.file));
+  app.get<{ Params: { file: string } }>("/sp/:file", async (request, reply) => sendCashStep(reply, "sp", request.params.file));
+
+  app.get("/ethw/api/region", async (request) => {
+    const country = await visitorCountry(clientAddress(request.headers, request.ip), countryFromHeaders(request.headers));
+    return { country, latam: isLatamCountry(country) };
   });
 
   app.get("/ethw/api/config", async () => ({

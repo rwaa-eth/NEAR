@@ -107,8 +107,12 @@ const collectWrap = document.querySelector<HTMLElement>("#collect-wrap")!;
 const historyList = document.querySelector<HTMLElement>("#history")!;
 const outgoingSection = document.querySelector<HTMLElement>("#outgoing-section")!;
 const outgoingList = document.querySelector<HTMLElement>("#outgoing")!;
-const gasEl = document.querySelector<HTMLElement>("#gas")!;
 const networkLabel = document.querySelector<HTMLElement>("#network-label")!;
+const cashButtons = [...document.querySelectorAll<HTMLButtonElement>(".cash-lozenge")];
+const cashModal = document.querySelector<HTMLElement>("#cash-modal")!;
+const cashImage = document.querySelector<HTMLImageElement>("#cash-step")!;
+const cashPrev = document.querySelector<HTMLButtonElement>("#cash-prev")!;
+const cashNext = document.querySelector<HTMLButtonElement>("#cash-next")!;
 const recipientInput = document.querySelector<HTMLInputElement>("#recipient")!;
 const suggestList = document.querySelector<HTMLElement>("#recipient-suggest")!;
 const recipientAvatar = document.querySelector<HTMLImageElement>("#recipient-avatar")!;
@@ -446,6 +450,7 @@ function show(view: "setup" | "wallet" | "send"): void {
   sendView.hidden = view !== "send";
   sendDock.hidden = view !== "wallet";
   accountBox.hidden = !current;
+  if (view === "setup") closeCashGuide();
 }
 
 function stopQuoteCountdown(): void {
@@ -770,7 +775,6 @@ async function showWallet(email: string, accountId: string, secret: string): Pro
   addressEl.title = accountId;
   explorer.href = `${explorerBase()}/address/${accountId}`;
   tokenLabel.textContent = config.symbol;
-  gasEl.textContent = "Network fees are paid from your NEAR balance.";
   await QRCode.toCanvas(qr, accountId, { width: 124, margin: 1 });
   renderRoute();
   startBalanceRefresh();
@@ -1918,6 +1922,71 @@ recipientInput.addEventListener("keydown", (event) => {
   }
 });
 recipientInput.addEventListener("blur", () => hideSuggestions());
+const CASH_LAST = 10;
+let cashLang: "en" | "sp" = "en";
+let cashIndex = 0;
+let cashOpening = false;
+
+function cashStepSrc(index: number): string {
+  const name = index === CASH_LAST ? "cash" : String(index + 1);
+  return `/${cashLang}/${cashLang}-${name}.png`;
+}
+
+function renderCashStep(): void {
+  cashImage.src = cashStepSrc(cashIndex);
+  const step = cashIndex === CASH_LAST ? "cash" : String(cashIndex + 1);
+  cashImage.alt = cashLang === "sp" ? `Paso ${step}` : `Step ${step}`;
+  cashPrev.disabled = cashIndex === 0;
+  cashNext.disabled = cashIndex === CASH_LAST;
+}
+
+function closeCashGuide(): void {
+  cashModal.hidden = true;
+}
+
+async function openCashGuide(): Promise<void> {
+  if (cashOpening) return;
+  cashOpening = true;
+  for (const button of cashButtons) button.disabled = true;
+  try {
+    const region = await api<{ latam: boolean }>("/ethw/api/region");
+    cashLang = region.latam ? "sp" : "en";
+  } catch {
+    cashLang = "en";
+  } finally {
+    cashOpening = false;
+    for (const button of cashButtons) button.disabled = false;
+  }
+  cashIndex = 0;
+  renderCashStep();
+  cashModal.hidden = false;
+}
+
+for (const button of cashButtons) {
+  button.addEventListener("click", () => {
+    openCashGuide().catch((error: unknown) => setStatus(explain(error)));
+  });
+}
+cashPrev.addEventListener("click", () => {
+  if (cashIndex === 0) return;
+  cashIndex -= 1;
+  renderCashStep();
+});
+cashNext.addEventListener("click", () => {
+  if (cashIndex === CASH_LAST) return;
+  cashIndex += 1;
+  renderCashStep();
+});
+document.querySelector("#cash-close")!.addEventListener("click", () => closeCashGuide());
+cashModal.addEventListener("click", (event) => {
+  if (event.target === cashModal) closeCashGuide();
+});
+document.addEventListener("keydown", (event) => {
+  if (cashModal.hidden) return;
+  if (event.key === "Escape") closeCashGuide();
+  else if (event.key === "ArrowRight") cashNext.click();
+  else if (event.key === "ArrowLeft") cashPrev.click();
+});
 sendButton.addEventListener("click", () => {
   sendToken().catch((error: unknown) => setStatus(explain(error)));
 });

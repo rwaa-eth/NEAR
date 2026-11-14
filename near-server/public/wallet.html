@@ -687,6 +687,91 @@
       padding: 1rem;
       background: rgba(26, 20, 15, 0.55);
     }
+    .cash-lozenge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      height: 2.4rem;
+      margin: 0 0 1rem;
+      padding: 0 0.85rem 0 0;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--ink);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(74, 42, 12, 0.08);
+    }
+    .cash-lozenge img {
+      width: 2.4rem;
+      height: 2.4rem;
+      border-radius: 50%;
+      object-fit: cover;
+      flex: none;
+    }
+    .cash-lozenge span {
+      font-family: Syne, Manrope, sans-serif;
+      letter-spacing: -0.02em;
+    }
+    .cash-lozenge:disabled { cursor: progress; }
+    .cash-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 45;
+      display: grid;
+      place-items: center;
+      padding: 0.75rem;
+      background: rgba(26, 20, 15, 0.72);
+    }
+    .cash-modal[hidden] { display: none !important; }
+    .cash-stage {
+      position: relative;
+      width: min(26rem, calc(100vw - 1.5rem), calc((100dvh - 2rem) * 0.8));
+    }
+    .cash-stage img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 1rem;
+      background: #f6efe4;
+    }
+    .cash-chevron, .cash-close {
+      position: absolute;
+      border: 0;
+      border-radius: 50%;
+      background: rgba(26, 20, 15, 0.78);
+      color: #fff;
+      cursor: pointer;
+    }
+    .cash-chevron {
+      top: 50%;
+      width: 2.7rem;
+      height: 2.7rem;
+      transform: translateY(-50%);
+    }
+    .cash-chevron span {
+      display: block;
+      width: 0.55rem;
+      height: 0.55rem;
+      margin: 0 auto;
+      border-top: 3px solid #fff;
+      border-right: 3px solid #fff;
+    }
+    .cash-prev { left: 0.45rem; }
+    .cash-next { right: 0.45rem; }
+    .cash-prev span { transform: rotate(-135deg); margin-left: 0.35rem; }
+    .cash-next span { transform: rotate(45deg); margin-right: 0.35rem; }
+    .cash-chevron:disabled { opacity: 0.35; cursor: default; }
+    .cash-close {
+      top: 0.45rem;
+      right: 0.45rem;
+      width: 2.1rem;
+      height: 2.1rem;
+      font: inherit;
+      font-size: 1.35rem;
+      line-height: 1;
+    }
     .scan-modal[hidden] { display: none !important; }
     .scan-card {
       width: min(24rem, 100%);
@@ -821,6 +906,10 @@
     <section id="wallet" class="view" hidden>
       <div class="panel">
         <p class="hero-copy"><strong>Your wallet</strong> on <span id="network-label">NEAR testnet</span>. Share the QR to receive.</p>
+        <button class="cash-lozenge" type="button">
+          <img src="/paka.svg" width="38" height="38" alt="">
+          <span>Cash</span>
+        </button>
         <div class="balances">
           <div class="balance-row"><span>NEAR</span><strong id="eth"><span class="amount-spin" aria-label="Loading NEAR balance"></span></strong></div>
           <div class="balance-row"><span id="token-label">USDT</span><strong id="token"><span class="amount-spin" aria-label="Loading USDT balance"></span></strong></div>
@@ -884,7 +973,10 @@
       </div>
       <div class="panel">
         <p class="hero-copy">Pay anyone with an email, a NEAR account, an Ethereum address, or a .eth name. Scan a payment QR to fill the address and amount.</p>
-        <p id="gas" class="muted"></p>
+        <button class="cash-lozenge" type="button">
+          <img src="/paka.svg" width="38" height="38" alt="">
+          <span>Cash</span>
+        </button>
         <label>To
           <span class="recipient-wrap">
             <span class="recipient-field">
@@ -928,6 +1020,15 @@
     </section>
 
     <p id="status" class="toast"></p>
+  </div>
+
+  <div id="cash-modal" class="cash-modal" hidden>
+    <div class="cash-stage" role="dialog" aria-modal="true" aria-label="Cash out steps">
+      <button id="cash-close" class="cash-close" type="button" aria-label="Close">×</button>
+      <img id="cash-step" alt="">
+      <button id="cash-prev" class="cash-chevron cash-prev" type="button" aria-label="Previous step"><span></span></button>
+      <button id="cash-next" class="cash-chevron cash-next" type="button" aria-label="Next step"><span></span></button>
+    </div>
   </div>
 
   <div id="scan-modal" class="scan-modal" hidden>

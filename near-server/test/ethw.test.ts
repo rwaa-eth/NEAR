@@ -67,6 +67,8 @@ describe("NEAR wallet", () => {
     const sendPage = await app.inject({ method: "GET", url: "/send" });
     assert.equal(sendPage.statusCode, 200);
     assert.match(sendPage.body, /NEAR account/);
+    assert.match(page.body, /class="cash-lozenge"/);
+    assert.doesNotMatch(page.body, /Network fees are paid/);
     assert.match(sendPage.body, /id="scan-modal"/);
     assert.match(sendPage.body, /id="signup-key"/);
     await app.close();
@@ -274,6 +276,28 @@ describe("NEAR wallet", () => {
     });
     assert.equal(denied.statusCode, 400);
     assert.match(denied.json().error, /mainnet/);
+    await app.close();
+  });
+
+  it("serves the cash-out steps for the visitor's country", async () => {
+    const app = testApp();
+    const icon = await app.inject({ method: "GET", url: "/paka.svg" });
+    assert.equal(icon.statusCode, 200);
+    assert.match(String(icon.headers["content-type"]), /image\/svg\+xml/);
+    const english = await app.inject({ method: "GET", url: "/en/en-1.png" });
+    assert.equal(english.statusCode, 200);
+    assert.match(String(english.headers["content-type"]), /image\/png/);
+    const spanish = await app.inject({ method: "GET", url: "/sp/sp-cash.png" });
+    assert.equal(spanish.statusCode, 200);
+    const sheet = await app.inject({ method: "GET", url: "/en/en-sheet.png" });
+    assert.equal(sheet.statusCode, 404);
+    const mexico = await app.inject({ method: "GET", url: "/ethw/api/region", headers: { "cf-ipcountry": "MX" } });
+    assert.equal(mexico.statusCode, 200);
+    assert.equal(mexico.json().latam, true);
+    const australia = await app.inject({ method: "GET", url: "/ethw/api/region", headers: { "cf-ipcountry": "AU" } });
+    assert.equal(australia.json().latam, false);
+    const local = await app.inject({ method: "GET", url: "/ethw/api/region" });
+    assert.equal(local.json().latam, false);
     await app.close();
   });
 });

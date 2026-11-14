@@ -12697,8 +12697,12 @@ var require_wallet = __commonJS({
     var historyList = document.querySelector("#history");
     var outgoingSection = document.querySelector("#outgoing-section");
     var outgoingList = document.querySelector("#outgoing");
-    var gasEl = document.querySelector("#gas");
     var networkLabel = document.querySelector("#network-label");
+    var cashButtons = [...document.querySelectorAll(".cash-lozenge")];
+    var cashModal = document.querySelector("#cash-modal");
+    var cashImage = document.querySelector("#cash-step");
+    var cashPrev = document.querySelector("#cash-prev");
+    var cashNext = document.querySelector("#cash-next");
     var recipientInput = document.querySelector("#recipient");
     var suggestList = document.querySelector("#recipient-suggest");
     var recipientAvatar = document.querySelector("#recipient-avatar");
@@ -13001,6 +13005,7 @@ var require_wallet = __commonJS({
       sendView.hidden = view !== "send";
       sendDock.hidden = view !== "wallet";
       accountBox.hidden = !current;
+      if (view === "setup") closeCashGuide();
     }
     function stopQuoteCountdown() {
       window.clearInterval(quoteTimer);
@@ -13290,7 +13295,6 @@ var require_wallet = __commonJS({
       addressEl.title = accountId;
       explorer.href = `${explorerBase()}/address/${accountId}`;
       tokenLabel.textContent = config.symbol;
-      gasEl.textContent = "Network fees are paid from your NEAR balance.";
       await import_qrcode.default.toCanvas(qr, accountId, { width: 124, margin: 1 });
       renderRoute();
       startBalanceRefresh();
@@ -14328,6 +14332,66 @@ var require_wallet = __commonJS({
       }
     });
     recipientInput.addEventListener("blur", () => hideSuggestions());
+    var CASH_LAST = 10;
+    var cashLang = "en";
+    var cashIndex = 0;
+    var cashOpening = false;
+    function cashStepSrc(index) {
+      const name = index === CASH_LAST ? "cash" : String(index + 1);
+      return `/${cashLang}/${cashLang}-${name}.png`;
+    }
+    function renderCashStep() {
+      cashImage.src = cashStepSrc(cashIndex);
+      const step = cashIndex === CASH_LAST ? "cash" : String(cashIndex + 1);
+      cashImage.alt = cashLang === "sp" ? `Paso ${step}` : `Step ${step}`;
+      cashPrev.disabled = cashIndex === 0;
+      cashNext.disabled = cashIndex === CASH_LAST;
+    }
+    function closeCashGuide() {
+      cashModal.hidden = true;
+    }
+    async function openCashGuide() {
+      if (cashOpening) return;
+      cashOpening = true;
+      for (const button of cashButtons) button.disabled = true;
+      try {
+        const region = await api("/ethw/api/region");
+        cashLang = region.latam ? "sp" : "en";
+      } catch {
+        cashLang = "en";
+      } finally {
+        cashOpening = false;
+        for (const button of cashButtons) button.disabled = false;
+      }
+      cashIndex = 0;
+      renderCashStep();
+      cashModal.hidden = false;
+    }
+    for (const button of cashButtons) {
+      button.addEventListener("click", () => {
+        openCashGuide().catch((error) => setStatus(explain(error)));
+      });
+    }
+    cashPrev.addEventListener("click", () => {
+      if (cashIndex === 0) return;
+      cashIndex -= 1;
+      renderCashStep();
+    });
+    cashNext.addEventListener("click", () => {
+      if (cashIndex === CASH_LAST) return;
+      cashIndex += 1;
+      renderCashStep();
+    });
+    document.querySelector("#cash-close").addEventListener("click", () => closeCashGuide());
+    cashModal.addEventListener("click", (event) => {
+      if (event.target === cashModal) closeCashGuide();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (cashModal.hidden) return;
+      if (event.key === "Escape") closeCashGuide();
+      else if (event.key === "ArrowRight") cashNext.click();
+      else if (event.key === "ArrowLeft") cashPrev.click();
+    });
     sendButton.addEventListener("click", () => {
       sendToken().catch((error) => setStatus(explain(error)));
     });

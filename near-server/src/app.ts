@@ -393,6 +393,9 @@ function isPublic(request: FastifyRequest): boolean {
     url === "/wallet.js" ||
     url === "/ragraphic.jpg" ||
     url === "/copyicon.png" ||
+    url === "/paka.svg" ||
+    url.startsWith("/en/") ||
+    url.startsWith("/sp/") ||
     url.startsWith("/ethw/")
   );
 }
